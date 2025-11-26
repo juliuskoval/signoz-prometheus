@@ -3,11 +3,15 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+
+	"github.com/gorilla/mux"
 
 	"github.com/SigNoz/signoz/pkg/query-service/model/metrics_explorer"
 )
@@ -15,11 +19,26 @@ import (
 const (
 	statusSuccess string = "success"
 	statusError   string = "error"
+	signozBaseUrl string = "http://signoz.ettech-uat.aws.dsarena.com"
 )
+
+func main() {
+	r := mux.NewRouter()
+	r.HandleFunc("/api/v1/query", getQuery)
+	r.HandleFunc("/api/v1/query_range", getQueryRange)
+	r.HandleFunc("/api/v1/series", getSeries)
+	r.HandleFunc("/api/v1/labels", getLabels)
+	r.HandleFunc("/api/v1/label/{label}/values", getLabelValues)
+
+	log.Println("Starting server on :9092")
+	if err := http.ListenAndServe(":9092", r); err != nil {
+		log.Fatalf("Could not start server: %s\n", err)
+	}
+}
 
 func getQuery(w http.ResponseWriter, r *http.Request) {
 
-	signozUrl := "http://localhost:8080/api/v1/query"
+	signozUrl := signozBaseUrl + "/api/v1/query"
 
 	req, err := http.NewRequest(r.Method, signozUrl, r.Body)
 	if err != nil {
@@ -35,7 +54,10 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	client := &http.Client{}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
 	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -102,7 +124,7 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 }
 
 func getLabels(w http.ResponseWriter, r *http.Request) {
-	signozUrl := "http://localhost:8080/api/v1/metrics/filters/keys"
+	signozUrl := signozBaseUrl + "/api/v1/metrics/filters/keys"
 
 	req, err := http.NewRequest(r.Method, signozUrl, r.Body)
 	if err != nil {
@@ -188,19 +210,57 @@ func writeHttpResponse(w http.ResponseWriter, data any) {
 }
 
 func getLabelValues(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	label := vars["label"]
+	fmt.Print(label)
 
-}
+	switch label {
+	case "__name__":
+		fmt.Print(label)
 
-func main() {
-	http.HandleFunc("/api/v1/query", getQuery)
-	http.HandleFunc("/api/v1/query_range", getQueryRange)
-	http.HandleFunc("/api/v1/series", getSeries)
-	http.HandleFunc("/api/v1/labels", getLabels)
-	http.HandleFunc("/api/v1/label/{label}/values", getLabelValues)
+		start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64)
+		end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64)
 
-	log.Println("Starting server on :9092")
-	if err := http.ListenAndServe(":9092", nil); err != nil {
-		log.Fatalf("Could not start server: %s\n", err)
+		params := &metrics_explorer.SummaryListMetricsRequest{
+			Start: start,
+			End:   end,
+		}
+
+		jsonBytes, err := json.Marshal(params)
+		if err != nil {
+			panic(err)
+		}
+
+		req, err := http.NewRequest(r.Method, signozBaseUrl+"/api/v1/metrics", bytes.NewBuffer(jsonBytes))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		for key, values := range r.Header {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		client := &http.Client{Transport: tr}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			http.Error(w, "failed to read backend response", http.StatusInternalServerError)
+			return
+		}
+	default:
+		fmt.Print(label)
 	}
 }
 
@@ -210,3 +270,5 @@ type apiResponse struct {
 }
 
 type Labels []string
+type Series []string
+type Values []string
