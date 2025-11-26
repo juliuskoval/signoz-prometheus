@@ -1,0 +1,135 @@
+package server
+
+import (
+	"context"
+	"crypto/tls"
+	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/gorilla/mux"
+	"go.uber.org/zap"
+)
+
+type Server struct {
+	signozBaseURL string
+	httpClient    *http.Client
+	r             *mux.Router
+}
+
+func BuildServer() *Server {
+	signozBaseURL := "http://signoz:8080"
+	if endpoint := os.Getenv("SIGNOZ_URL"); endpoint != "" {
+		if _, err := url.ParseRequestURI(endpoint); err != nil {
+			zap.L().Fatal("Invalid endpoint", zap.String("server.address", endpoint), zap.Error(err))
+		}
+		signozBaseURL = endpoint
+		zap.L().Info("Setting SigNoz API endpoint", zap.String("server.address", endpoint))
+	} else {
+		zap.L().Info("Using the default SigNoz endpoint", zap.String("server.address", signozBaseURL))
+	}
+
+	tlsCfg, err := buildTLSConfig()
+	if err != nil {
+		zap.L().Fatal("Failed to build TLS config", zap.Error(err))
+	}
+
+	tr := &http.Transport{TLSClientConfig: tlsCfg}
+
+	server := &Server{
+		signozBaseURL: signozBaseURL,
+		httpClient:    &http.Client{Transport: tr, Timeout: 30 * time.Second},
+		r:             mux.NewRouter(),
+	}
+
+	return server
+}
+
+func buildTLSConfig() (*tls.Config, error) {
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if os.Getenv("SIGNOZ_TLS_SKIP_VERIFY") == "true" {
+		zap.L().Warn("TLS certificate verification disabled (SIGNOZ_TLS_SKIP_VERIFY=true)")
+		cfg.InsecureSkipVerify = true
+	}
+	return cfg, nil
+}
+
+func (s *Server) RegisterRoutes() {
+	s.r.HandleFunc("/healthz", s.getHealth)
+	s.r.HandleFunc("/api/v1/query", s.getQuery)
+	s.r.HandleFunc("/api/v1/query_range", s.getQueryRange)
+	s.r.HandleFunc("/api/v1/labels", s.getLabels)
+	s.r.HandleFunc("/api/v1/label/{label}/values", s.getLabelValues)
+	s.r.HandleFunc("/api/v1/metadata", s.getMetadata)
+
+	s.r.NotFoundHandler = http.HandlerFunc(s.handleFallback)
+}
+
+func (s *Server) Start() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8081"
+	}
+	addr := ":" + port
+
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: s.r,
+	}
+
+	s.initialize()
+
+	idleConnsClosed := make(chan struct{})
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+
+		zap.L().Info("Shutdown signal received, draining connections")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			zap.L().Error("Error during server shutdown", zap.Error(err))
+		}
+		close(idleConnsClosed)
+	}()
+
+	zap.L().Info("Starting server", zap.String("server.address", addr))
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		zap.L().Fatal("Could not start server", zap.Error(err))
+	}
+
+	<-idleConnsClosed
+	zap.L().Info("Server stopped")
+}
+
+func (s *Server) initialize() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.signozBaseURL+"/api/v2/metrics", nil)
+	if err != nil {
+		zap.L().Warn("Failed to build /api/v2/metrics probe request, falling back to v1", zap.Error(err))
+		v2 = false
+		return
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		zap.L().Warn("Failed to probe /api/v2/metrics, falling back to v1", zap.Error(err))
+		v2 = false
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		zap.L().Info("/api/v2/metrics not available, falling back to v1")
+		v2 = false
+		return
+	}
+
+	zap.L().Info("/api/v2/metrics available, using v2")
+}
