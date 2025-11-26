@@ -12,21 +12,22 @@ import (
 	"strconv"
 
 	"github.com/gorilla/mux"
+	"github.com/prometheus/prometheus/promql/parser"
 
-	"github.com/SigNoz/signoz/pkg/query-service/model/metrics_explorer"
+	v3 "github.com/SigNoz/signoz/pkg/query-service/model/v3"
+	"github.com/SigNoz/signoz/pkg/types/telemetrytypes"
 )
 
 const (
 	statusSuccess string = "success"
 	statusError   string = "error"
-	signozBaseUrl string = "http://signoz.ettech-uat.aws.dsarena.com"
+	signozBaseUrl string = "http://localhost:8080"
 )
 
 func main() {
 	r := mux.NewRouter()
 	r.HandleFunc("/api/v1/query", getQuery)
 	r.HandleFunc("/api/v1/query_range", getQueryRange)
-	r.HandleFunc("/api/v1/series", getSeries)
 	r.HandleFunc("/api/v1/labels", getLabels)
 	r.HandleFunc("/api/v1/label/{label}/values", getLabelValues)
 
@@ -78,29 +79,6 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 		log.Println("Error copying response body:", err)
 	}
 }
-
-func getSeries(w http.ResponseWriter, r *http.Request) {
-
-	val := r.FormValue("start")
-	fmt.Println(val)
-	// Execute the request
-	// response, _ := client.Do(req)
-	// defer response.Body.Close()
-
-	// // Decode the JSON response
-	// var resp Resp
-	// json.NewDecoder(response.Body).Decode(&resp)
-
-	// jsonBytes, err := json.MarshalIndent(resp, "", "  ")
-	// if err != nil {
-	// 	fmt.Println("Failed to format JSON:", err)
-	// 	return
-	// }
-	// fmt.Println(string(jsonBytes))
-
-	// writeJSON(w, http.StatusOK, response)
-}
-
 func getQueryRange(w http.ResponseWriter, r *http.Request) {
 
 	val := r.FormValue("start")
@@ -124,9 +102,20 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 }
 
 func getLabels(w http.ResponseWriter, r *http.Request) {
-	signozUrl := signozBaseUrl + "/api/v1/metrics/filters/keys"
+	url := signozBaseUrl + "/api/v1/fields/keys?signal=metrics&"
 
-	req, err := http.NewRequest(r.Method, signozUrl, r.Body)
+	start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64)
+	if err == nil {
+		url = url + "start=" + strconv.FormatInt(start*1000, 10)
+	}
+
+	end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64)
+	if err == nil {
+		url = url + "end=" + strconv.FormatInt(end*1000, 10)
+	}
+	match := r.URL.Query().Get("matchh")
+	fmt.Print(match)
+	req, err := http.NewRequest(r.Method, url, r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -147,53 +136,129 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Read raw body
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		http.Error(w, "failed to read backend response", http.StatusInternalServerError)
-		return
-	}
-
-	// Decompress only if Content-Encoding == gzip
-	var decompressed []byte
-	if resp.Header.Get("Content-Encoding") == "gzip" {
-		reader, err := gzip.NewReader(bytes.NewReader(bodyBytes))
-		if err != nil {
-			http.Error(w, "gzip decode failed", http.StatusBadGateway)
-			return
-		}
-		defer reader.Close()
-		decompressed, err = io.ReadAll(reader)
-		if err != nil {
-			http.Error(w, "failed to decompress gzip", http.StatusBadGateway)
-			return
-		}
-	} else {
-		decompressed = bodyBytes
-	}
-
-	// Unmarshal into generic response
-	var signozApiResponse apiResponse
-	if err := json.Unmarshal(decompressed, &signozApiResponse); err != nil {
-		http.Error(w, "failed to parse backend JSON", http.StatusInternalServerError)
-		return
-	}
+	response, err := readBody(resp)
 
 	// Marshal Data → specific type
-	var labels metrics_explorer.FilterKeyResponse
-	jsonBytes, _ := json.Marshal(signozApiResponse.Data)
-	if err := json.Unmarshal(jsonBytes, &labels); err != nil {
+	var keys fieldKeysResponse
+	jsonBytes, _ := json.Marshal(response.Data)
+	if err := json.Unmarshal(jsonBytes, &keys); err != nil {
 		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
 		return
 	}
 
 	// Extract just the keys
-	result := make([]string, 0, len(labels.AttributeKeys))
-	for _, v := range labels.AttributeKeys {
-		result = append(result, v.Key)
+	result := make([]string, 0, len(keys.Keys))
+	for _, v := range keys.Keys {
+		result = append(result, v[0].Name)
 	}
 
 	writeHttpResponse(w, result)
+}
+
+func getLabelValues(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	label := vars["label"]
+	fmt.Print(label)
+
+	switch label {
+	case "__name__":
+		req, err := http.NewRequest("GET", signozBaseUrl+"/api/v3/autocomplete/aggregate_attributes?dataSource=metrics", nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		for key, values := range r.Header {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+
+		client := &http.Client{Transport: tr}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		response, err := readBody(resp)
+
+		var metrics v3.AggregateAttributeResponse
+		jsonBytes, _ := json.Marshal(response.Data)
+		if err := json.Unmarshal(jsonBytes, &metrics); err != nil {
+			http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
+			return
+		}
+
+		result := make([]string, 0, len(metrics.AttributeKeys))
+
+		for _, v := range metrics.AttributeKeys {
+			result = append(result, v.Key)
+		}
+
+		writeHttpResponse(w, result)
+	default:
+		url := signozBaseUrl + "/api/v1/fields/values?signal=metrics&name=" + label
+
+		match := r.URL.Query().Get("match[]")
+		var metricName string
+
+		p, err := parser.ParseMetricSelector(match)
+
+		for _, v := range p {
+			if v.Name == "__name__" {
+				metricName = v.Value
+			}
+		}
+
+		if metricName != "" {
+			url = url + "&metricName=" + metricName
+		}
+
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		for key, values := range r.Header {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+
+		client := &http.Client{Transport: tr}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		response, err := readBody(resp)
+
+		var keys fieldValuesResponse
+		jsonBytes, _ := json.Marshal(response.Data)
+		if err := json.Unmarshal(jsonBytes, &keys); err != nil {
+			http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
+			return
+		}
+
+		result := keys.Values.StringValues
+
+		writeHttpResponse(w, result)
+	}
 }
 
 func writeHttpResponse(w http.ResponseWriter, data any) {
@@ -209,64 +274,50 @@ func writeHttpResponse(w http.ResponseWriter, data any) {
 	}
 }
 
-func getLabelValues(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	label := vars["label"]
-	fmt.Print(label)
+func readBody(r *http.Response) (apiResponse, error) {
+	var response apiResponse
+	var decompressed []byte
 
-	switch label {
-	case "__name__":
-		fmt.Print(label)
-
-		start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64)
-		end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64)
-
-		params := &metrics_explorer.SummaryListMetricsRequest{
-			Start: start,
-			End:   end,
-		}
-
-		jsonBytes, err := json.Marshal(params)
-		if err != nil {
-			panic(err)
-		}
-
-		req, err := http.NewRequest(r.Method, signozBaseUrl+"/api/v1/metrics", bytes.NewBuffer(jsonBytes))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		for key, values := range r.Header {
-			for _, value := range values {
-				req.Header.Add(key, value)
-			}
-		}
-		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-		client := &http.Client{Transport: tr}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			http.Error(w, "failed to read backend response", http.StatusInternalServerError)
-			return
-		}
-	default:
-		fmt.Print(label)
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		return response, err
 	}
+
+	if r.Header.Get("Content-Encoding") == "gzip" {
+		reader, err := gzip.NewReader(bytes.NewReader(bodyBytes))
+		if err != nil {
+			return response, err
+		}
+
+		defer reader.Close()
+		decompressed, err = io.ReadAll(reader)
+		if err != nil {
+			return response, err
+		}
+	} else {
+		decompressed = bodyBytes
+	}
+
+	if err := json.Unmarshal(decompressed, &response); err != nil {
+		return response, err
+	}
+
+	return response, nil
 }
 
 type apiResponse struct {
 	Status string `json:"status"`
 	Data   any    `json:"data,omitempty"`
+}
+
+type fieldKeysResponse struct {
+	Keys     map[string][]*telemetrytypes.TelemetryFieldKey `json:"keys"`
+	Complete bool                                           `json:"complete"`
+}
+
+type fieldValuesResponse struct {
+	Values   *telemetrytypes.TelemetryFieldValues `json:"values"`
+	Complete bool                                 `json:"complete"`
 }
 
 type Labels []string
