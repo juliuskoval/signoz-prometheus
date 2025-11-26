@@ -65,6 +65,7 @@ dario.cat/mergo v1.0.1/go.mod h1:uNxQE+84aUszobStD9th8a29P2fMDhsBdgRYvZOxGmk=
 dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7gZCb22OMCxBHrMx7a5I7Hp++hsVxbQ4BYO7hU=
 github.com/AfterShip/clickhouse-sql-parser v0.4.11 h1:fZMKAjRmgzW44+hEhF6ywi4VjFZQjJ8QrFBbgBsjmF4=
 github.com/AfterShip/clickhouse-sql-parser v0.4.11/go.mod h1:W0Z82wJWkJxz2RVun/RMwxue3g7ut47Xxl+SFqdJGus=
+github.com/AfterShip/clickhouse-sql-parser v0.4.16/go.mod h1:W0Z82wJWkJxz2RVun/RMwxue3g7ut47Xxl+SFqdJGus=
 github.com/Azure/azure-sdk-for-go v68.0.0+incompatible h1:fcYLmCpyNYRnvJbPerq7U0hS+6+I79yEDJBqVNcqUzU=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.19.1 h1:5YTBM8QDVIBN3sxBil89WfdAAqDZbyJTgh688DSxX5w=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.19.1/go.mod h1:YD5h/ldMsG0XiIw7PdyNhLxaM317eFh5yNLccNfGdyw=
@@ -86,6 +87,8 @@ github.com/SigNoz/govaluate v0.0.0-20240203125216-988004ccc7fd h1:Bk43AsDYe0fhkb
 github.com/SigNoz/govaluate v0.0.0-20240203125216-988004ccc7fd/go.mod h1:nxRcH/OEdM8QxzH37xkGzomr1O0JpYBRS6pwjsWW6Pc=
 github.com/SigNoz/signoz v0.102.1 h1:S64GnsG9aeA5tTgLundr1Kpo+Xod8aJ+a0tPYpY4QjE=
 github.com/SigNoz/signoz v0.102.1/go.mod h1:YYL5BCMLp3GizYWVPwNzQMdhBeFk/zEjGn7USC4S/jw=
+github.com/SigNoz/signoz v0.103.0 h1:9SEtP2Jo1XAeyhH2oiJPQxno0ShI+rESyJtliCDceiw=
+github.com/SigNoz/signoz v0.103.0/go.mod h1:J5ZCan6EPpXYdTMhZQSJfvP4uTbHJJnyVXC5O93gjIs=
 github.com/SigNoz/signoz-otel-collector v0.129.4 h1:DGDu9y1I1FU+HX4eECPGmfhnXE4ys4yr7LL6znbf6to=
 github.com/SigNoz/signoz-otel-collector v0.129.4/go.mod h1:xyR+coBzzO04p6Eu+ql2RVYUl/jFD+8hD9lArcc9U7g=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=

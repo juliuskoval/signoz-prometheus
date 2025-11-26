@@ -10,8 +10,10 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
 	v3 "github.com/SigNoz/signoz/pkg/query-service/model/v3"
@@ -113,9 +115,8 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		url = url + "end=" + strconv.FormatInt(end*1000, 10)
 	}
-	match := r.URL.Query().Get("matchh")
-	fmt.Print(match)
-	req, err := http.NewRequest(r.Method, url, r.Body)
+
+	req, err := http.NewRequest(r.Method, url, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -158,44 +159,89 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	label := vars["label"]
-	fmt.Print(label)
+	url := signozBaseUrl
 
-	switch label {
-	case "__name__":
-		req, err := http.NewRequest("GET", signozBaseUrl+"/api/v3/autocomplete/aggregate_attributes?dataSource=metrics", nil)
+	match := r.URL.Query().Get("match[]")
+	var matcher []*labels.Matcher
+	if match != "" {
+		var err error
+		matcher, err = parser.ParseMetricSelector(match)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			//TODO
 		}
-
-		for key, values := range r.Header {
-			for _, value := range values {
-				req.Header.Add(key, value)
-			}
+	}
+	var metricName string
+	var searchText string
+	for _, v := range matcher {
+		if v.Name == "__name__" && v.Type == labels.MatchEqual {
+			metricName = v.Value
 		}
-
-		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		if v.Name == "__name__" && v.Type == labels.MatchRegexp {
+			searchText = v.Value //TODO parse
+			searchText = strings.ReplaceAll(searchText, ".*", "")
 		}
+	}
 
-		client := &http.Client{Transport: tr}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
+	if label == "__name__" {
+		url = signozBaseUrl + "/api/v3/autocomplete/aggregate_attributes?dataSource=metrics"
+		if searchText != "" {
+			url = url + "&searchText=" + searchText
 		}
-		defer resp.Body.Close()
+	} else {
+		url = signozBaseUrl + "/api/v1/fields/values?signal=metrics"
+		if metricName != "" {
+			url = url + "&metricName=" + metricName
+		} else if searchText != "" {
+			url = url + "&searchText=" + searchText
+		}
+	}
 
-		response, err := readBody(resp)
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		url = url + "&limit=" + limit
+	}
+	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
+		start = start * 1000
+		url = url + "&start" + strconv.FormatInt(start, 10)
+	}
+	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
+		end = end * 1000
+		url = url + "&end" + strconv.FormatInt(end, 10)
+	}
 
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	for key, values := range r.Header {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	response, err := readBody(resp)
+
+	if label == "__name__" {
 		var metrics v3.AggregateAttributeResponse
 		jsonBytes, _ := json.Marshal(response.Data)
 		if err := json.Unmarshal(jsonBytes, &metrics); err != nil {
 			http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-			return
+			return //TODO
 		}
-
 		result := make([]string, 0, len(metrics.AttributeKeys))
 
 		for _, v := range metrics.AttributeKeys {
@@ -203,13 +249,57 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		writeHttpResponse(w, result)
+	}
+
+	switch label {
+	case "__name__":
+		// req, err := http.NewRequest("GET", signozBaseUrl+"/api/v3/autocomplete/aggregate_attributes?dataSource=metrics", nil)
+		// if err != nil {
+		// 	http.Error(w, err.Error(), http.StatusInternalServerError)
+		// 	return
+		// }
+
+		// for key, values := range r.Header {
+		// 	for _, value := range values {
+		// 		req.Header.Add(key, value)
+		// 	}
+		// }
+
+		// tr := &http.Transport{
+		// 	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		// }
+
+		// client := &http.Client{Transport: tr}
+
+		// resp, err := client.Do(req)
+		// if err != nil {
+		// 	http.Error(w, err.Error(), http.StatusBadGateway)
+		// 	return
+		// }
+		// defer resp.Body.Close()
+
+		// response, err := readBody(resp)
+
+		// var metrics v3.AggregateAttributeResponse
+		// jsonBytes, _ := json.Marshal(response.Data)
+		// if err := json.Unmarshal(jsonBytes, &metrics); err != nil {
+		// 	http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
+		// 	return
+		// }
+
+		// result := make([]string, 0, len(metrics.AttributeKeys))
+
+		// for _, v := range metrics.AttributeKeys {
+		// 	result = append(result, v.Key)
+		// }
+
+		// writeHttpResponse(w, result)
 	default:
 		url := signozBaseUrl + "/api/v1/fields/values?signal=metrics&name=" + label
 
-		match := r.URL.Query().Get("match[]")
 		var metricName string
 
-		p, err := parser.ParseMetricSelector(match)
+		p, err := parser.ParseMetricSelector(match) //TODO: MatchRegexp
 
 		for _, v := range p {
 			if v.Name == "__name__" {

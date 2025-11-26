@@ -7,7 +7,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.8.4 // indirect
 	dario.cat/mergo v1.0.1 // indirect
-	github.com/AfterShip/clickhouse-sql-parser v0.4.11 // indirect
+	github.com/AfterShip/clickhouse-sql-parser v0.4.16 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.19.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.12.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
@@ -15,7 +15,7 @@ require (
 	github.com/ClickHouse/ch-go v0.67.0 // indirect
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.1 // indirect
 	github.com/SigNoz/govaluate v0.0.0-20240203125216-988004ccc7fd // indirect
-	github.com/SigNoz/signoz v0.102.1 // indirect
+	github.com/SigNoz/signoz v0.103.0 // indirect
 	github.com/SigNoz/signoz-otel-collector v0.129.4 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
