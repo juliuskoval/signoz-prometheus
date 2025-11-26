@@ -24,6 +24,7 @@ const (
 	statusSuccess string = "success"
 	statusError   string = "error"
 	signozBaseUrl string = "http://localhost:8080"
+	nameField     string = "__name__"
 )
 
 func main() {
@@ -173,16 +174,16 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	var metricName string
 	var searchText string
 	for _, v := range matcher {
-		if v.Name == "__name__" && v.Type == labels.MatchEqual {
+		if v.Name == nameField && v.Type == labels.MatchEqual {
 			metricName = v.Value
 		}
-		if v.Name == "__name__" && v.Type == labels.MatchRegexp {
+		if v.Name == nameField && v.Type == labels.MatchRegexp {
 			searchText = v.Value //TODO parse
 			searchText = strings.ReplaceAll(searchText, ".*", "")
 		}
 	}
 
-	if label == "__name__" {
+	if label == nameField {
 		url = signozBaseUrl + "/api/v3/autocomplete/aggregate_attributes?dataSource=metrics"
 		if searchText != "" {
 			url = url + "&searchText=" + searchText
@@ -235,7 +236,7 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 
 	response, err := readBody(resp)
 
-	if label == "__name__" {
+	if label == nameField {
 		var metrics v3.AggregateAttributeResponse
 		jsonBytes, _ := json.Marshal(response.Data)
 		if err := json.Unmarshal(jsonBytes, &metrics); err != nil {
@@ -252,7 +253,7 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch label {
-	case "__name__":
+	case nameField:
 		// req, err := http.NewRequest("GET", signozBaseUrl+"/api/v3/autocomplete/aggregate_attributes?dataSource=metrics", nil)
 		// if err != nil {
 		// 	http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -302,7 +303,7 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 		p, err := parser.ParseMetricSelector(match) //TODO: MatchRegexp
 
 		for _, v := range p {
-			if v.Name == "__name__" {
+			if v.Name == nameField {
 				metricName = v.Value
 			}
 		}
