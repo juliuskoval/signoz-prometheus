@@ -23,7 +23,7 @@ import (
 const (
 	statusSuccess string = "success"
 	statusError   string = "error"
-	signozBaseUrl string = "http://localhost:8080"
+	signozBaseUrl string = "https://signoz.ettech-uat.aws.dsarena.com"
 	nameField     string = "__name__"
 )
 
@@ -107,6 +107,27 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 func getLabels(w http.ResponseWriter, r *http.Request) {
 	url := signozBaseUrl + "/api/v1/fields/keys?signal=metrics&"
 
+	match := r.URL.Query().Get("match[]")
+	var matcher []*labels.Matcher
+	if match != "" {
+		var err error
+		matcher, err = parser.ParseMetricSelector(match)
+		if err != nil {
+			//TODO
+		}
+	}
+	var metricName string
+	var searchText string
+	for _, v := range matcher {
+		if v.Name == nameField && v.Type == labels.MatchEqual {
+			metricName = v.Value
+		}
+		if v.Name == nameField && v.Type == labels.MatchRegexp {
+			searchText = v.Value //TODO parse
+			searchText = strings.ReplaceAll(searchText, ".*", "")
+		}
+	}
+
 	start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64)
 	if err == nil {
 		url = url + "start=" + strconv.FormatInt(start*1000, 10)
@@ -115,6 +136,12 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64)
 	if err == nil {
 		url = url + "end=" + strconv.FormatInt(end*1000, 10)
+	}
+	if metricName != "" {
+		url = url + "&metricName=" + metricName
+	}
+	if searchText != "" {
+		url = url + "&searchText=" + searchText
 	}
 
 	req, err := http.NewRequest(r.Method, url, nil)
@@ -189,12 +216,13 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 			url = url + "&searchText=" + searchText
 		}
 	} else {
-		url = signozBaseUrl + "/api/v1/fields/values?signal=metrics"
+		url = signozBaseUrl + "/api/v1/fields/values?signal=metrics&name=" + label
 		if metricName != "" {
 			url = url + "&metricName=" + metricName
 		} else if searchText != "" {
 			url = url + "&searchText=" + searchText
 		}
+
 	}
 
 	if limit := r.URL.Query().Get("limit"); limit != "" {
@@ -202,11 +230,11 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	}
 	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
 		start = start * 1000
-		url = url + "&start" + strconv.FormatInt(start, 10)
+		url = url + "&start=" + strconv.FormatInt(start, 10)
 	}
 	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
 		end = end * 1000
-		url = url + "&end" + strconv.FormatInt(end, 10)
+		url = url + "&end=" + strconv.FormatInt(end, 10)
 	}
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -228,6 +256,7 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Transport: tr}
 
 	resp, err := client.Do(req)
+	fmt.Print(req.URL.Host + req.URL.Path + req.URL.RawQuery)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -250,103 +279,14 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		writeHttpResponse(w, result)
-	}
-
-	switch label {
-	case nameField:
-		// req, err := http.NewRequest("GET", signozBaseUrl+"/api/v3/autocomplete/aggregate_attributes?dataSource=metrics", nil)
-		// if err != nil {
-		// 	http.Error(w, err.Error(), http.StatusInternalServerError)
-		// 	return
-		// }
-
-		// for key, values := range r.Header {
-		// 	for _, value := range values {
-		// 		req.Header.Add(key, value)
-		// 	}
-		// }
-
-		// tr := &http.Transport{
-		// 	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		// }
-
-		// client := &http.Client{Transport: tr}
-
-		// resp, err := client.Do(req)
-		// if err != nil {
-		// 	http.Error(w, err.Error(), http.StatusBadGateway)
-		// 	return
-		// }
-		// defer resp.Body.Close()
-
-		// response, err := readBody(resp)
-
-		// var metrics v3.AggregateAttributeResponse
-		// jsonBytes, _ := json.Marshal(response.Data)
-		// if err := json.Unmarshal(jsonBytes, &metrics); err != nil {
-		// 	http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-		// 	return
-		// }
-
-		// result := make([]string, 0, len(metrics.AttributeKeys))
-
-		// for _, v := range metrics.AttributeKeys {
-		// 	result = append(result, v.Key)
-		// }
-
-		// writeHttpResponse(w, result)
-	default:
-		url := signozBaseUrl + "/api/v1/fields/values?signal=metrics&name=" + label
-
-		var metricName string
-
-		p, err := parser.ParseMetricSelector(match) //TODO: MatchRegexp
-
-		for _, v := range p {
-			if v.Name == nameField {
-				metricName = v.Value
-			}
-		}
-
-		if metricName != "" {
-			url = url + "&metricName=" + metricName
-		}
-
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		for key, values := range r.Header {
-			for _, value := range values {
-				req.Header.Add(key, value)
-			}
-		}
-
-		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-
-		client := &http.Client{Transport: tr}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		response, err := readBody(resp)
-
-		var keys fieldValuesResponse
+	} else {
+		var values fieldValuesResponse
 		jsonBytes, _ := json.Marshal(response.Data)
-		if err := json.Unmarshal(jsonBytes, &keys); err != nil {
+		if err := json.Unmarshal(jsonBytes, &values); err != nil {
 			http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-			return
+			return //TODO
 		}
-
-		result := keys.Values.StringValues
+		result := values.Values.StringValues
 
 		writeHttpResponse(w, result)
 	}
