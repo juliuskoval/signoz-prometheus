@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -42,9 +44,9 @@ func main() {
 
 func getQuery(w http.ResponseWriter, r *http.Request) {
 
-	signozUrl := signozBaseUrl + "/api/v1/query"
+	url := signozBaseUrl + "/api/v1/query"
 
-	req, err := http.NewRequest(r.Method, signozUrl, r.Body)
+	req, err := http.NewRequest(r.Method, url, r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -84,24 +86,45 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 }
 func getQueryRange(w http.ResponseWriter, r *http.Request) {
 
-	val := r.FormValue("start")
-	fmt.Println(val)
-	// Execute the request
-	// response, _ := client.Do(req)
-	// defer response.Body.Close()
+	url := signozBaseUrl + "/api/v1/query_range"
 
-	// // Decode the JSON response
-	// var resp Resp
-	// json.NewDecoder(response.Body).Decode(&resp)
+	req, err := http.NewRequest(r.Method, url, r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	// jsonBytes, err := json.MarshalIndent(resp, "", "  ")
-	// if err != nil {
-	// 	fmt.Println("Failed to format JSON:", err)
-	// 	return
-	// }
-	// fmt.Println(string(jsonBytes))
+	req.URL.RawQuery = strings.ReplaceAll(r.URL.RawQuery, "%22%22", "%22")
 
-	// writeJSON(w, http.StatusOK, response)
+	for key, values := range r.Header {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	w.WriteHeader(resp.StatusCode)
+
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		log.Println("Error copying response body:", err)
+	}
 }
 
 func getLabels(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +201,7 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	// Extract just the keys
 	result := make([]string, 0, len(keys.Keys))
 	for _, v := range keys.Keys {
-		result = append(result, v[0].Name)
+		result = append(result, "\""+v[0].Name+"\"")
 	}
 
 	writeHttpResponse(w, result)
@@ -186,7 +209,7 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 
 func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	label := vars["label"]
+	label := revertLabelName(vars["label"])
 	url := signozBaseUrl
 
 	match := r.URL.Query().Get("match[]")
@@ -205,7 +228,7 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 			metricName = v.Value
 		}
 		if v.Name == nameField && v.Type == labels.MatchRegexp {
-			searchText = v.Value //TODO parse
+			searchText = v.Value
 			searchText = strings.ReplaceAll(searchText, ".*", "")
 		}
 	}
@@ -334,6 +357,32 @@ func readBody(r *http.Response) (apiResponse, error) {
 	}
 
 	return response, nil
+}
+
+func revertLabelName(encoded string) string {
+	const prefix = "U__"
+	if !strings.HasPrefix(encoded, prefix) {
+		// Not an encoded label
+		return encoded
+	}
+
+	// Strip U__ prefix
+	s := strings.TrimPrefix(encoded, prefix)
+
+	// Pattern matches: _XX_  (where XX is hex)
+	re := regexp.MustCompile(`_([0-9a-fA-F]{2})_`)
+
+	// Replace each matched sequence with its decoded byte
+	decoded := re.ReplaceAllStringFunc(s, func(m string) string {
+		hexStr := m[1 : len(m)-1] // strip leading and trailing underscores
+		b, err := hex.DecodeString(hexStr)
+		if err != nil || len(b) == 0 {
+			return m // fallback: return original
+		}
+		return string(b[0])
+	})
+
+	return decoded
 }
 
 type apiResponse struct {
