@@ -25,7 +25,7 @@ import (
 const (
 	statusSuccess string = "success"
 	statusError   string = "error"
-	signozBaseUrl string = "https://signoz.ettech-uat.aws.dsarena.com"
+	signozBaseUrl string = "http://localhost:8080"
 	nameField     string = "__name__"
 )
 
@@ -131,14 +131,13 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	url := signozBaseUrl + "/api/v1/fields/keys?signal=metrics&"
 
 	match := r.URL.Query().Get("match[]")
-	var matcher []*labels.Matcher
-	if match != "" {
-		var err error
-		matcher, err = parser.ParseMetricSelector(match)
-		if err != nil {
-			//TODO
-		}
+	if match == "" {
+		match = r.URL.Query().Get("match%5B%5D")
 	}
+	match = strings.ReplaceAll(match, "\"\"", "\"")
+
+	matcher, err := parser.ParseMetricSelector(match)
+
 	var metricName string
 	var searchText string
 	for _, v := range matcher {
@@ -213,14 +212,12 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	url := signozBaseUrl
 
 	match := r.URL.Query().Get("match[]")
-	var matcher []*labels.Matcher
-	if match != "" {
-		var err error
-		matcher, err = parser.ParseMetricSelector(match)
-		if err != nil {
-			//TODO
-		}
+	if match == "" {
+		match = r.URL.Query().Get("match%5B%5D")
 	}
+
+	matcher, err := parser.ParseMetricSelector(match)
+
 	var metricName string
 	var searchText string
 	for _, v := range matcher {
