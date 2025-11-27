@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
+	"go.uber.org/zap"
 
 	v3 "github.com/SigNoz/signoz/pkg/query-service/model/v3"
 	"github.com/SigNoz/signoz/pkg/types/telemetrytypes"
@@ -24,19 +25,31 @@ import (
 
 const (
 	statusSuccess string = "success"
-	statusError   string = "error"
-	signozBaseUrl string = "http://localhost:8080"
 	nameField     string = "__name__"
 )
 
+var (
+	signozBaseUrl string = "http://localhost:8080"
+	log           *zap.Logger
+)
+
 func main() {
+	log := zap.Must(zap.NewProduction()).Sugar()
+
+	if url := os.Getenv("SIGNOZ_URL"); url != "" {
+		signozBaseUrl = url
+		log.Infof("Setting %s as the SigNoz endpoint.", url)
+	} else {
+		log.Infof("Using the default address for SigNoz: %s.", signozBaseUrl)
+	}
+
 	r := mux.NewRouter()
 	r.HandleFunc("/api/v1/query", getQuery)
 	r.HandleFunc("/api/v1/query_range", getQueryRange)
 	r.HandleFunc("/api/v1/labels", getLabels)
 	r.HandleFunc("/api/v1/label/{label}/values", getLabelValues)
 
-	log.Println("Starting server on :9092")
+	log.Info("Starting server on :9092")
 	if err := http.ListenAndServe(":9092", r); err != nil {
 		log.Fatalf("Could not start server: %s\n", err)
 	}
@@ -81,7 +94,7 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		log.Println("Error copying response body:", err)
+		log.Sugar().Errorf("Error copying response body: %s", err)
 	}
 }
 func getQueryRange(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +136,7 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		log.Println("Error copying response body:", err)
+		log.Sugar().Errorf("Error copying response body: %s", err)
 	}
 }
 
@@ -161,7 +174,6 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Forward headers
 	for k, vals := range r.Header {
 		for _, v := range vals {
 			req.Header.Add(k, v)
@@ -178,7 +190,6 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 
 	response, err := readBody(resp)
 
-	// Marshal Data → specific type
 	var keys fieldKeysResponse
 	jsonBytes, _ := json.Marshal(response.Data)
 	if err := json.Unmarshal(jsonBytes, &keys); err != nil {
@@ -186,7 +197,6 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract just the keys
 	result := make([]string, 0, len(keys.Keys))
 	for _, v := range keys.Keys {
 		result = append(result, "\""+v[0].Name+"\"")
@@ -204,6 +214,7 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	if match == "" {
 		match = r.URL.Query().Get("match%5B%5D")
 	}
+	match = strings.ReplaceAll(match, "\"\"", "\"")
 
 	matcher, err := parser.ParseMetricSelector(match)
 
@@ -347,22 +358,18 @@ func readBody(r *http.Response) (apiResponse, error) {
 func revertLabelName(encoded string) string {
 	const prefix = "U__"
 	if !strings.HasPrefix(encoded, prefix) {
-		// Not an encoded label
 		return encoded
 	}
 
-	// Strip U__ prefix
 	s := strings.TrimPrefix(encoded, prefix)
 
-	// Pattern matches: _XX_  (where XX is hex)
 	re := regexp.MustCompile(`_([0-9a-fA-F]{2})_`)
 
-	// Replace each matched sequence with its decoded byte
 	decoded := re.ReplaceAllStringFunc(s, func(m string) string {
-		hexStr := m[1 : len(m)-1] // strip leading and trailing underscores
+		hexStr := m[1 : len(m)-1]
 		b, err := hex.DecodeString(hexStr)
 		if err != nil || len(b) == 0 {
-			return m // fallback: return original
+			return m
 		}
 		return string(b[0])
 	})
