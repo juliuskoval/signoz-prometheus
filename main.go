@@ -138,30 +138,21 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 
 	matcher, err := parser.ParseMetricSelector(match)
 
-	var metricName string
-	var searchText string
 	for _, v := range matcher {
 		if v.Name == nameField && v.Type == labels.MatchEqual {
-			metricName = v.Value
+			url = url + "&metricName=" + v.Value
 		}
 		if v.Name == nameField && v.Type == labels.MatchRegexp {
-			searchText = v.Value //TODO parse
-			searchText = strings.ReplaceAll(searchText, ".*", "")
+			url = url + "&searchText=" + strings.ReplaceAll(v.Value, ".*", "")
 		}
 	}
 
 	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
-		url = url + "&start=" + strconv.FormatInt(start*1000, 10)
+		url = url + "&startUnixMilli=" + strconv.FormatInt(start*1000, 10)
 	}
 
 	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
-		url = url + "&end=" + strconv.FormatInt(end*1000, 10)
-	}
-	if metricName != "" {
-		url = url + "&metricName=" + metricName
-	}
-	if searchText != "" {
-		url = url + "&searchText=" + searchText
+		url = url + "&endUnixMilli=" + strconv.FormatInt(end*1000, 10)
 	}
 
 	req, err := http.NewRequest(r.Method, url, nil)
@@ -221,8 +212,7 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	for _, v := range matcher {
 		if v.Name == nameField && v.Type == labels.MatchEqual {
 			metricName = v.Value
-		}
-		if v.Name == nameField && v.Type == labels.MatchRegexp {
+		} else if v.Name == nameField && v.Type == labels.MatchRegexp {
 			searchText = v.Value
 			searchText = strings.ReplaceAll(searchText, ".*", "")
 		}
@@ -241,17 +231,18 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 			url = url + "&searchText=" + searchText
 		}
 
+		if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
+			url = url + "&startUnixMilli=" + strconv.FormatInt(start*1000, 10)
+		}
+
+		if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
+			url = url + "&endUnixMilli=" + strconv.FormatInt(end*1000, 10)
+		}
+
 	}
 
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		url = url + "&limit=" + limit
-	}
-	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
-		url = url + "&start=" + strconv.FormatInt(start*1000, 10)
-	}
-
-	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
-		url = url + "&end=" + strconv.FormatInt(end*1000, 10)
 	}
 
 	req, err := http.NewRequest("GET", url, nil)
