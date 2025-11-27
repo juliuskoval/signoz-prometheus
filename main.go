@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -23,6 +22,8 @@ import (
 	"github.com/SigNoz/signoz/pkg/types/telemetrytypes"
 )
 
+//TODO: table values - SigNoz bug?
+
 const (
 	statusSuccess string = "success"
 	nameField     string = "__name__"
@@ -30,7 +31,6 @@ const (
 
 var (
 	signozBaseUrl string = "http://localhost:8080"
-	log           *zap.Logger
 )
 
 func main() {
@@ -56,7 +56,7 @@ func main() {
 }
 
 func getQuery(w http.ResponseWriter, r *http.Request) {
-
+	// log.Sugar().Debugf("Received request at %s", r.URL.String())
 	url := signozBaseUrl + "/api/v1/query"
 
 	req, err := http.NewRequest(r.Method, url, r.Body)
@@ -94,11 +94,11 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		log.Sugar().Errorf("Error copying response body: %s", err)
+		// log.Sugar().Errorf("Error copying response body: %s", err)
 	}
 }
 func getQueryRange(w http.ResponseWriter, r *http.Request) {
-
+	// log.Sugar().Debugf("Received request at %s", r.URL.String())
 	url := signozBaseUrl + "/api/v1/query_range"
 
 	req, err := http.NewRequest(r.Method, url, r.Body)
@@ -136,11 +136,12 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		log.Sugar().Errorf("Error copying response body: %s", err)
+		// log.Sugar().Errorf("Error copying response body: %s", err)
 	}
 }
 
 func getLabels(w http.ResponseWriter, r *http.Request) {
+	// log.Sugar().Debugf("Received request at %s", r.URL.String())
 	url := signozBaseUrl + "/api/v1/fields/keys?signal=metrics&"
 
 	match := r.URL.Query().Get("match[]")
@@ -168,20 +169,7 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 		url = url + "&endUnixMilli=" + strconv.FormatInt(end*1000, 10)
 	}
 
-	req, err := http.NewRequest(r.Method, url, nil)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	for k, vals := range r.Header {
-		for _, v := range vals {
-			req.Header.Add(k, v)
-		}
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := callSignozApi(r, url)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -206,6 +194,7 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 func getLabelValues(w http.ResponseWriter, r *http.Request) {
+	// log.Sugar().Debugf("Received request at %s", r.URL.String())
 	vars := mux.Vars(r)
 	label := revertLabelName(vars["label"])
 	url := signozBaseUrl
@@ -275,7 +264,7 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Transport: tr}
 
 	resp, err := client.Do(req)
-	fmt.Print(req.URL.Host + req.URL.Path + req.URL.RawQuery)
+	// fmt.Print(req.URL.Host + req.URL.Path + req.URL.RawQuery)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -353,6 +342,28 @@ func readBody(r *http.Response) (apiResponse, error) {
 	}
 
 	return response, nil
+}
+
+func callSignozApi(r *http.Request, url string) (*http.Response, error) {
+	var resp *http.Response
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		// http.Error(w, err.Error(), http.StatusInternalServerError)
+		return resp, err
+	}
+
+	for key, values := range r.Header {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+	// log.Sugar().Debugf("Sending HTTP request to %s", url)
+	return client.Do(req)
 }
 
 func revertLabelName(encoded string) string {
