@@ -150,14 +150,12 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64)
-	if err == nil {
-		url = url + "start=" + strconv.FormatInt(start*1000, 10)
+	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
+		url = url + "&start=" + strconv.FormatInt(start*1000, 10)
 	}
 
-	end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64)
-	if err == nil {
-		url = url + "end=" + strconv.FormatInt(end*1000, 10)
+	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
+		url = url + "&end=" + strconv.FormatInt(end*1000, 10)
 	}
 	if metricName != "" {
 		url = url + "&metricName=" + metricName
@@ -249,12 +247,11 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 		url = url + "&limit=" + limit
 	}
 	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
-		start = start * 1000
-		url = url + "&start=" + strconv.FormatInt(start, 10)
+		url = url + "&start=" + strconv.FormatInt(start*1000, 10)
 	}
+
 	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
-		end = end * 1000
-		url = url + "&end=" + strconv.FormatInt(end, 10)
+		url = url + "&end=" + strconv.FormatInt(end*1000, 10)
 	}
 
 	req, err := http.NewRequest("GET", url, nil)
