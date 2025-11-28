@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -30,17 +31,21 @@ const (
 )
 
 var (
-	signozBaseUrl string = "http://localhost:8080"
+	signozBaseUrl string = "https://signoz.ettech-uat.aws.dsarena.com"
+	log           *zap.Logger
 )
 
 func main() {
-	log := zap.Must(zap.NewProduction()).Sugar()
+	log, _ = zap.NewProduction()
 
-	if url := os.Getenv("SIGNOZ_URL"); url != "" {
-		signozBaseUrl = url
-		log.Infof("Setting %s as the SigNoz endpoint.", url)
+	if endpoint := os.Getenv("SIGNOZ_URL"); endpoint != "" {
+		if _, err := url.ParseRequestURI(endpoint); err != nil {
+			log.Fatal("Invalid endpoint", zap.String("server.address", endpoint), zap.Error(err))
+		}
+		signozBaseUrl = endpoint
+		log.Info("Setting SigNoz API endpoint.", zap.String("server.address", endpoint))
 	} else {
-		log.Infof("Using the default address for SigNoz: %s.", signozBaseUrl)
+		log.Info("Using the default SigNoz endpoint.", zap.String("server.address", signozBaseUrl))
 	}
 
 	r := mux.NewRouter()
@@ -51,12 +56,12 @@ func main() {
 
 	log.Info("Starting server on :9092")
 	if err := http.ListenAndServe(":9092", r); err != nil {
-		log.Fatalf("Could not start server: %s\n", err)
+		log.Fatal("Could not start server.", zap.Error(err))
 	}
 }
 
 func getQuery(w http.ResponseWriter, r *http.Request) {
-	// log.Sugar().Debugf("Received request at %s", r.URL.String())
+	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
 	url := signozBaseUrl + "/api/v1/query"
 
 	req, err := http.NewRequest(r.Method, url, r.Body)
@@ -94,11 +99,11 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		// log.Sugar().Errorf("Error copying response body: %s", err)
+		log.Error("Error copying response body", zap.Error(err))
 	}
 }
 func getQueryRange(w http.ResponseWriter, r *http.Request) {
-	// log.Sugar().Debugf("Received request at %s", r.URL.String())
+	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
 	url := signozBaseUrl + "/api/v1/query_range"
 
 	req, err := http.NewRequest(r.Method, url, r.Body)
@@ -133,15 +138,16 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(resp.StatusCode)
+	//TODO writeHttpResponse
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		// log.Sugar().Errorf("Error copying response body: %s", err)
+		log.Error("Error copying response body.", zap.Error(err))
 	}
 }
 
 func getLabels(w http.ResponseWriter, r *http.Request) {
-	// log.Sugar().Debugf("Received request at %s", r.URL.String())
+	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
 	url := signozBaseUrl + "/api/v1/fields/keys?signal=metrics&"
 
 	match := r.URL.Query().Get("match[]")
@@ -194,7 +200,7 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 func getLabelValues(w http.ResponseWriter, r *http.Request) {
-	// log.Sugar().Debugf("Received request at %s", r.URL.String())
+	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
 	vars := mux.Vars(r)
 	label := revertLabelName(vars["label"])
 	url := signozBaseUrl
@@ -264,7 +270,6 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Transport: tr}
 
 	resp, err := client.Do(req)
-	// fmt.Print(req.URL.Host + req.URL.Path + req.URL.RawQuery)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -304,7 +309,6 @@ func writeHttpResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	// Encode ONCE
 	if err := json.NewEncoder(w).Encode(&apiResponse{
 		Status: statusSuccess,
 		Data:   data,
@@ -362,7 +366,7 @@ func callSignozApi(r *http.Request, url string) (*http.Response, error) {
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 	client := &http.Client{Transport: tr}
-	// log.Sugar().Debugf("Sending HTTP request to %s", url)
+	log.Debug("Sending HTTP request to", zap.String("url.full", r.RequestURI))
 	return client.Do(req)
 }
 
@@ -402,7 +406,3 @@ type fieldValuesResponse struct {
 	Values   *telemetrytypes.TelemetryFieldValues `json:"values"`
 	Complete bool                                 `json:"complete"`
 }
-
-type Labels []string
-type Series []string
-type Values []string
