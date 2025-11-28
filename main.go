@@ -33,6 +33,7 @@ const (
 var (
 	signozBaseUrl string = "https://signoz.ettech-uat.aws.dsarena.com"
 	log           *zap.Logger
+	httpClient    *http.Client
 )
 
 func main() {
@@ -43,10 +44,15 @@ func main() {
 			log.Fatal("Invalid endpoint", zap.String("server.address", endpoint), zap.Error(err))
 		}
 		signozBaseUrl = endpoint
-		log.Info("Setting SigNoz API endpoint.", zap.String("server.address", endpoint))
+		log.Info("Setting SigNoz API endpoint", zap.String("server.address", endpoint))
 	} else {
-		log.Info("Using the default SigNoz endpoint.", zap.String("server.address", signozBaseUrl))
+		log.Info("Using the default SigNoz endpoint", zap.String("server.address", signozBaseUrl))
 	}
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	httpClient = &http.Client{Transport: tr}
 
 	r := mux.NewRouter()
 	r.HandleFunc("/api/v1/query", getQuery)
@@ -56,33 +62,15 @@ func main() {
 
 	log.Info("Starting server on :9092")
 	if err := http.ListenAndServe(":9092", r); err != nil {
-		log.Fatal("Could not start server.", zap.Error(err))
+		log.Fatal("Could not start server", zap.Error(err))
 	}
 }
 
 func getQuery(w http.ResponseWriter, r *http.Request) {
 	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
-	url := signozBaseUrl + "/api/v1/query"
+	url := signozBaseUrl + r.RequestURI
 
-	req, err := http.NewRequest(r.Method, url, r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	req.URL.RawQuery = r.URL.RawQuery
-
-	for key, values := range r.Header {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
-	}
-
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{Transport: tr}
-	resp, err := client.Do(req)
+	resp, err := callSignozApi(r, url)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -100,33 +88,18 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
 		log.Error("Error copying response body", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 func getQueryRange(w http.ResponseWriter, r *http.Request) {
 	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
-	url := signozBaseUrl + "/api/v1/query_range"
+	url := signozBaseUrl + r.RequestURI
+	url = strings.ReplaceAll(url, "%22%22", "%22")
 
-	req, err := http.NewRequest(r.Method, url, r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	req.URL.RawQuery = strings.ReplaceAll(r.URL.RawQuery, "%22%22", "%22")
-
-	for key, values := range r.Header {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
-	}
-
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{Transport: tr}
-	resp, err := client.Do(req)
+	resp, err := callSignozApi(r, url)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
+		log.Error("An error occured while calling SigNoz API", zap.String("url.full", url), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -142,7 +115,7 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		log.Error("Error copying response body.", zap.Error(err))
+		log.Error("Error copying response body", zap.Error(err))
 	}
 }
 
@@ -178,6 +151,7 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	resp, err := callSignozApi(r, url)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
+		log.Error("An error occured while calling SigNoz API", zap.String("url.full", url), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -187,7 +161,7 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	var keys fieldKeysResponse
 	jsonBytes, _ := json.Marshal(response.Data)
 	if err := json.Unmarshal(jsonBytes, &keys); err != nil {
-		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
+		http.Error(w, "backend JSON format mismatch", http.StatusInternalServerError)
 		return
 	}
 
@@ -251,27 +225,10 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 		url = url + "&limit=" + limit
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	for key, values := range r.Header {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
-	}
-
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	client := &http.Client{Transport: tr}
-
-	resp, err := client.Do(req)
+	resp, err := callSignozApi(r, url)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
+		log.Error("An error occured while calling SigNoz API", zap.String("url.full", url), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -282,8 +239,9 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 		var metrics v3.AggregateAttributeResponse
 		jsonBytes, _ := json.Marshal(response.Data)
 		if err := json.Unmarshal(jsonBytes, &metrics); err != nil {
+			log.Error("Failed to unmarshal response from SigNoz", zap.Error(err))
 			http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-			return //TODO
+			return
 		}
 		result := make([]string, 0, len(metrics.AttributeKeys))
 
@@ -296,8 +254,9 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 		var values fieldValuesResponse
 		jsonBytes, _ := json.Marshal(response.Data)
 		if err := json.Unmarshal(jsonBytes, &values); err != nil {
+			log.Error("Failed to unmarshal response from SigNoz", zap.Error(err))
 			http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-			return //TODO
+			return
 		}
 		result := values.Values.StringValues
 
@@ -313,6 +272,7 @@ func writeHttpResponse(w http.ResponseWriter, data any) {
 		Status: statusSuccess,
 		Data:   data,
 	}); err != nil {
+		log.Error("Failed to write response", zap.Error(err))
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 	}
 }
@@ -352,7 +312,6 @@ func callSignozApi(r *http.Request, url string) (*http.Response, error) {
 	var resp *http.Response
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		// http.Error(w, err.Error(), http.StatusInternalServerError)
 		return resp, err
 	}
 
@@ -362,12 +321,8 @@ func callSignozApi(r *http.Request, url string) (*http.Response, error) {
 		}
 	}
 
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{Transport: tr}
 	log.Debug("Sending HTTP request to", zap.String("url.full", r.RequestURI))
-	return client.Do(req)
+	return httpClient.Do(req)
 }
 
 func revertLabelName(encoded string) string {
