@@ -24,8 +24,6 @@ import (
 	"github.com/SigNoz/signoz/pkg/types/telemetrytypes"
 )
 
-//TODO: table values - SigNoz bug?
-
 const (
 	statusSuccess string = "success"
 	nameField     string = "__name__"
