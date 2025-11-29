@@ -59,7 +59,6 @@ func main() {
 	r.HandleFunc("/api/v1/labels", getLabels)
 	r.HandleFunc("/api/v1/label/{label}/values", getLabelValues)
 	r.HandleFunc("/", handleFallback)
-	//TODO fallback
 
 	log.Info("Starting server on :9092")
 	if err := http.ListenAndServe(":9092", r); err != nil {
@@ -279,7 +278,8 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFallback(w http.ResponseWriter, r *http.Request) {
-	log.Warn("No handler defined for the requested path", zap.String("url.path", r.RequestURI))
+	log.Warn("", zap.String("url.path", r.RequestURI))
+	http.Error(w, "No handler defined for the route", http.StatusNotImplemented)
 }
 
 func writeHttpResponse(w http.ResponseWriter, data any) {
