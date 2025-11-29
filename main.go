@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -59,6 +60,8 @@ func main() {
 	r.HandleFunc("/api/v1/query_range", getQueryRange)
 	r.HandleFunc("/api/v1/labels", getLabels)
 	r.HandleFunc("/api/v1/label/{label}/values", getLabelValues)
+	r.HandleFunc("/", handleFallback)
+	//TODO fallback
 
 	log.Info("Starting server on :9092")
 	if err := http.ListenAndServe(":9092", r); err != nil {
@@ -67,7 +70,7 @@ func main() {
 }
 
 func getQuery(w http.ResponseWriter, r *http.Request) {
-	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received HTTP request", zap.String("url.full", r.RequestURI))
 	url := signozBaseUrl + r.RequestURI
 
 	resp, err := callSignozApi(r, url)
@@ -94,7 +97,7 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 }
 
 func getQueryRange(w http.ResponseWriter, r *http.Request) {
-	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received HTTP request", zap.String("url.full", r.RequestURI))
 	url := signozBaseUrl + r.RequestURI
 	url = strings.ReplaceAll(url, "%22%22", "%22")
 
@@ -122,7 +125,7 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 }
 
 func getLabels(w http.ResponseWriter, r *http.Request) {
-	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received HTTP request", zap.String("url.full", r.RequestURI))
 	url := signozBaseUrl + "/api/v1/fields/keys?signal=metrics&"
 
 	match := r.URL.Query().Get("match[]")
@@ -133,7 +136,7 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 
 	matcher, err := parser.ParseMetricSelector(match)
 	if err != nil {
-		log.Warn("Failed to parse matcher", zap.Error(err), zap.String("url", r.RequestURI))
+		log.Warn("Failed to parse matcher", zap.Error(err), zap.String("url.path", r.RequestURI))
 	}
 
 	for _, v := range matcher {
@@ -183,60 +186,57 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 func getLabelValues(w http.ResponseWriter, r *http.Request) {
-	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received HTTP request", zap.String("url.full", r.RequestURI))
 	vars := mux.Vars(r)
 	label := revertLabelName(vars["label"])
 	url := signozBaseUrl
+
+	if label == nameField {
+		url = url + "/api/v3/autocomplete/aggregate_attributes?dataSource=metrics"
+	} else {
+		url = url + "/api/v1/fields/values?signal=metrics&name=" + label
+	}
 
 	match := r.URL.Query().Get("match[]")
 	if match == "" {
 		match = r.URL.Query().Get("match%5B%5D")
 	}
-	match = strings.ReplaceAll(match, "\"\"", "\"")
+	if match != "" {
+		match = strings.ReplaceAll(match, "\"\"", "\"")
 
-	matcher, err := parser.ParseMetricSelector(match)
-	if err != nil {
-		log.Warn("Failed to parse matcher", zap.Error(err), zap.String("url", r.RequestURI))
-	}
-
-	var metricName string
-	var searchText string
-	for _, v := range matcher {
-		if v.Name == nameField && v.Type == labels.MatchEqual {
-			metricName = v.Value
-		} else if v.Name == nameField && v.Type == labels.MatchRegexp {
-			searchText = v.Value
-			searchText = strings.ReplaceAll(searchText, ".*", "")
-		}
-	}
-
-	if label == nameField {
-		url = signozBaseUrl + "/api/v3/autocomplete/aggregate_attributes?dataSource=metrics"
-		if searchText != "" {
-			url = url + "&searchText=" + searchText
-		}
-	} else {
-		url = signozBaseUrl + "/api/v1/fields/values?signal=metrics&name=" + label
-		if metricName != "" {
-			url = url + "&metricName=" + metricName
-		} else if searchText != "" {
-			url = url + "&searchText=" + searchText
+		matcher, err := parser.ParseMetricSelector(match)
+		if err != nil {
+			log.Warn("Failed to parse matcher", zap.Error(err), zap.String("url", r.RequestURI))
 		}
 
-		if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
-			url = url + "&startUnixMilli=" + strconv.FormatInt(start*1000, 10)
+		if label == nameField {
+			for _, v := range matcher {
+				if v.Name == nameField && v.Type == labels.MatchRegexp {
+					url = url + "&searchText=" + strings.ReplaceAll(v.Value, ".*", "")
+				}
+			}
+		} else {
+			for _, v := range matcher {
+				if v.Name == nameField && v.Type == labels.MatchEqual {
+					url = url + "&metricName=" + v.Value
+				} else if v.Name != nameField && v.Type == labels.MatchRegexp {
+					url = url + "&searchText=" + strings.ReplaceAll(v.Value, ".*", "")
+				}
+			}
 		}
-
-		if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
-			url = url + "&endUnixMilli=" + strconv.FormatInt(end*1000, 10)
-		}
-
 	}
 
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		url = url + "&limit=" + limit
 	}
+	fmt.Print(url)
+	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
+		fmt.Print("&startUnixMilli=" + strconv.FormatInt(start*1000, 10))
+	}
 
+	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
+		fmt.Println("&endUnixMilli=" + strconv.FormatInt(end*1000, 10))
+	}
 	resp, err := callSignozApi(r, url)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -278,6 +278,10 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 
 		writeHttpResponse(w, result)
 	}
+}
+
+func handleFallback(w http.ResponseWriter, r *http.Request) {
+	log.Warn("No handler defined for the requested path", zap.String("url.path", r.RequestURI))
 }
 
 func writeHttpResponse(w http.ResponseWriter, data any) {
@@ -337,7 +341,7 @@ func callSignozApi(r *http.Request, url string) (*http.Response, error) {
 		}
 	}
 
-	log.Debug("Sending HTTP request to", zap.String("url.full", r.RequestURI))
+	log.Info("Sending HTTP request to", zap.String("url.full", r.RequestURI))
 	return httpClient.Do(req)
 }
 
