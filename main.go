@@ -31,7 +31,7 @@ const (
 )
 
 var (
-	signozBaseUrl string = "https://signoz.ettech-uat.aws.dsarena.com"
+	signozBaseUrl string = "http://signoz:8080"
 	log           *zap.Logger
 	httpClient    *http.Client
 )
@@ -73,6 +73,7 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 	resp, err := callSignozApi(r, url)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
+		log.Error("An error occured while calling SigNoz API", zap.String("url.full", url), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -88,9 +89,10 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
 		log.Error("Error copying response body", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadGateway)
 	}
 }
+
 func getQueryRange(w http.ResponseWriter, r *http.Request) {
 	log.Debug("Received HTTP request", zap.String("url.full", r.RequestURI))
 	url := signozBaseUrl + r.RequestURI
@@ -111,11 +113,11 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(resp.StatusCode)
-	//TODO writeHttpResponse
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
 		log.Error("Error copying response body", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadGateway)
 	}
 }
 
@@ -130,6 +132,9 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	match = strings.ReplaceAll(match, "\"\"", "\"")
 
 	matcher, err := parser.ParseMetricSelector(match)
+	if err != nil {
+		log.Warn("Failed to parse matcher", zap.Error(err), zap.String("url", r.RequestURI))
+	}
 
 	for _, v := range matcher {
 		if v.Name == nameField && v.Type == labels.MatchEqual {
@@ -157,6 +162,10 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	response, err := readBody(resp)
+	if err != nil {
+		log.Error("Failed to read response from SigNoz API", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadGateway)
+	}
 
 	var keys fieldKeysResponse
 	jsonBytes, _ := json.Marshal(response.Data)
@@ -186,6 +195,9 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	match = strings.ReplaceAll(match, "\"\"", "\"")
 
 	matcher, err := parser.ParseMetricSelector(match)
+	if err != nil {
+		log.Warn("Failed to parse matcher", zap.Error(err), zap.String("url", r.RequestURI))
+	}
 
 	var metricName string
 	var searchText string
@@ -234,6 +246,10 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	response, err := readBody(resp)
+	if err != nil {
+		log.Error("Failed to read response from SigNoz API", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadGateway)
+	}
 
 	if label == nameField {
 		var metrics v3.AggregateAttributeResponse
