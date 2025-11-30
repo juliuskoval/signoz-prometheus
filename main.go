@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -94,9 +95,15 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 
 func getQueryRange(w http.ResponseWriter, r *http.Request) {
 	log.Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
-	url := signozBaseUrl + r.RequestURI
-	url = strings.ReplaceAll(url, "%22%22", "%22")
 
+	err := sanitizeQuery(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Error("Failed to parse request", zap.Error(err))
+		return
+	}
+
+	url := signozBaseUrl + r.URL.Path + "?" + r.URL.RawQuery
 	resp, err := callSignozApi(r, url)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -118,6 +125,25 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 		log.Error("Error copying response body", zap.Error(err))
 		http.Error(w, err.Error(), http.StatusBadGateway)
 	}
+}
+
+func sanitizeQuery(r *http.Request) error {
+	q := r.URL.Query().Get("query")
+	_, err := parser.ParseExpr(q)
+	if err != nil {
+		q = strings.ReplaceAll(q, "__ignore_usage__=\"\", ", "")
+		q = strings.ReplaceAll(q, "\"\"", "\"")
+		_, err = parser.ParseExpr(q)
+		if err != nil {
+			return errors.New("Failed to parse query value " + q)
+		}
+
+		query := r.URL.Query()
+		query.Set("query", q)
+		r.URL.RawQuery = query.Encode()
+	}
+
+	return nil
 }
 
 func getLabels(w http.ResponseWriter, r *http.Request) {
