@@ -20,4 +20,4 @@ Now you should be able to create a new visualization with this data source and q
 
 This app implements those missing APIs and acts as a proxy between Grafana and SigNoz. If you deploy it and point the Prometheus data source to the Docker container with other settings set according to the instructions above, the app will call the existing SigNoz API and return data in the format compatible with Prometheus. Then you should be able to see suggestions for existing metrics and labels is Grafana.
 
-The easiest way to is to deploy it is to copy the `docker-compose.yaml` from this repository to the machine where SigNoz is running and just run `docker compose up -d`. You can set the address of your SigNoz instance with the 
+The address of your SigNoz instance can be set using the `SIGNOZ_URL` environment variable. If you use the `docker-compose.yaml` file from this repository on the same machine where SigNoz is running, it should work out of the box.
