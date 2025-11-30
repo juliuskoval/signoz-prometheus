@@ -151,9 +151,7 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	url := signozBaseUrl + "/api/v1/fields/keys?signal=metrics&"
 
 	match := r.URL.Query().Get("match[]")
-	if match == "" {
-		match = r.URL.Query().Get("match%5B%5D")
-	}
+
 	match = strings.ReplaceAll(match, "\"\"", "\"")
 
 	matcher, err := parser.ParseMetricSelector(match)
