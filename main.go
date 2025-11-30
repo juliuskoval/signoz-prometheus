@@ -67,7 +67,7 @@ func main() {
 }
 
 func getQuery(w http.ResponseWriter, r *http.Request) {
-	log.Info("Received HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
 	url := signozBaseUrl + r.RequestURI
 
 	resp, err := callSignozApi(r, url)
@@ -94,7 +94,7 @@ func getQuery(w http.ResponseWriter, r *http.Request) {
 }
 
 func getQueryRange(w http.ResponseWriter, r *http.Request) {
-	log.Info("Received HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
 	url := signozBaseUrl + r.RequestURI
 	url = strings.ReplaceAll(url, "%22%22", "%22")
 
@@ -122,7 +122,7 @@ func getQueryRange(w http.ResponseWriter, r *http.Request) {
 }
 
 func getLabels(w http.ResponseWriter, r *http.Request) {
-	log.Info("Received HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
 	url := signozBaseUrl + "/api/v1/fields/keys?signal=metrics&"
 
 	match := r.URL.Query().Get("match[]")
@@ -183,7 +183,7 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 func getLabelValues(w http.ResponseWriter, r *http.Request) {
-	log.Info("Received HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
 	vars := mux.Vars(r)
 	label := revertLabelName(vars["label"])
 	url := signozBaseUrl
@@ -339,7 +339,7 @@ func callSignozApi(r *http.Request, url string) (*http.Response, error) {
 		}
 	}
 
-	log.Info("Sending HTTP request to", zap.String("url.full", r.RequestURI))
+	log.Info("Sending an HTTP request to", zap.String("url.full", r.RequestURI))
 	return httpClient.Do(req)
 }
 
