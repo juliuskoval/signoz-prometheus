@@ -225,6 +225,14 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
+		url = url + "&startUnixMilli=" + strconv.FormatInt(start*1000, 10)
+	}
+
+	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
+		url = url + "&endUnixMilli=" + strconv.FormatInt(end*1000, 10)
+	}
+
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		url = url + "&limit=" + limit
 	}
@@ -334,7 +342,7 @@ func callSignozApi(r *http.Request, url string) (*http.Response, error) {
 		}
 	}
 
-	log.Info("Sending an HTTP request to", zap.String("url.full", r.RequestURI))
+	log.Info("Sending an HTTP request to", zap.String("url.full", url))
 	return httpClient.Do(req)
 }
 
