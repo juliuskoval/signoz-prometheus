@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -139,8 +138,11 @@ func getLabels(w http.ResponseWriter, r *http.Request) {
 	for _, v := range matcher {
 		if v.Name == nameField && v.Type == labels.MatchEqual {
 			url = url + "&metricName=" + v.Value
-		}
-		if v.Name == nameField && v.Type == labels.MatchRegexp {
+		} else if v.Name == nameField && v.Type == labels.MatchRegexp {
+			metricName := strings.ReplaceAll(v.Value, ".*", "")
+			metricName = strings.ReplaceAll(metricName, ".+", "")
+			url = url + "&metricName=" + metricName
+		} else if v.Name != nameField && v.Type == labels.MatchRegexp {
 			url = url + "&searchText=" + strings.ReplaceAll(v.Value, ".*", "")
 		}
 	}
@@ -226,14 +228,7 @@ func getLabelValues(w http.ResponseWriter, r *http.Request) {
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		url = url + "&limit=" + limit
 	}
-	fmt.Print(url)
-	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
-		fmt.Print("&startUnixMilli=" + strconv.FormatInt(start*1000, 10))
-	}
 
-	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
-		fmt.Println("&endUnixMilli=" + strconv.FormatInt(end*1000, 10))
-	}
 	resp, err := callSignozApi(r, url)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
