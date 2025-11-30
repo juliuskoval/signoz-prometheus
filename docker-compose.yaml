@@ -7,9 +7,6 @@ services:
     networks:
       - signoz-net
     restart: unless-stopped
-    environment:
-      LOG_LEVEL: debug
-
 networks:
   signoz-net:
     external: true
