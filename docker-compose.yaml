@@ -1,6 +1,6 @@
 services:
   signoz-proxy:
-    image: signoz-proxy
+    image: juliuskoval/signoz-proxy:latest
     container_name: signoz-proxy
     ports:
       - "9092:9092"
