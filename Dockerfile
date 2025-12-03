@@ -26,7 +26,7 @@ WORKDIR /app
 
 COPY --from=builder /app/server .
 
-EXPOSE 9092
+EXPOSE 8081
 
 USER appuser
 

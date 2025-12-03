@@ -1,10 +1,11 @@
-module api
+module github.com/juliuskoval/signoz-proxy
 
 go 1.25.3
 
 require (
-	github.com/SigNoz/signoz v0.103.0
+	github.com/SigNoz/signoz v0.104.0
 	github.com/gorilla/mux v1.8.1
+	github.com/prometheus/common v0.67.4
 	github.com/prometheus/prometheus v0.307.3
 	go.uber.org/zap v1.27.1
 )
@@ -32,7 +33,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.67.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
@@ -42,8 +42,8 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
-	golang.org/x/sys v0.36.0 // indirect
-	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/sys v0.37.0 // indirect
+	golang.org/x/text v0.30.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
