@@ -60,8 +60,8 @@ func main() {
 	r.HandleFunc("/api/v1/label/{label}/values", getLabelValues)
 	r.HandleFunc("/", handleFallback)
 
-	log.Info("Starting server on :9092")
-	if err := http.ListenAndServe(":9092", r); err != nil {
+	log.Info("Starting server on :8081")
+	if err := http.ListenAndServe(":8081", r); err != nil {
 		log.Fatal("Could not start server", zap.Error(err))
 	}
 }

@@ -3,7 +3,7 @@ services:
     image: juliuskoval/signoz-proxy:latest
     container_name: signoz-proxy
     ports:
-      - "9092:9092"
+      - "8081:8081"
     networks:
       - signoz-net
     restart: unless-stopped
