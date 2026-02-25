@@ -103,8 +103,6 @@ func (s *Server) getLabels(w http.ResponseWriter, r *http.Request) {
 			metricName := strings.ReplaceAll(v.Value, ".*", "")
 			metricName = strings.ReplaceAll(metricName, ".+", "")
 			params.Set("metricName", metricName)
-		} else if v.Name != nameField && v.Type == labels.MatchRegexp {
-			params.Set("searchText", strings.ReplaceAll(v.Value, ".*", ""))
 		}
 	}
 
