@@ -1,0 +1,14 @@
+services:
+  signoz-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: signoz-proxy
+    ports:
+      - "8081:8081"
+    networks:
+      - signoz-net
+    restart: unless-stopped
+networks:
+  signoz-net:
+    external: true
