@@ -57,7 +57,9 @@ func (s *Server) RegisterRoutes() {
 	s.r.HandleFunc("/api/v1/query_range", s.getQueryRange)
 	s.r.HandleFunc("/api/v1/labels", s.getLabels)
 	s.r.HandleFunc("/api/v1/label/{label}/values", s.getLabelValues)
-	s.r.HandleFunc("/", s.handleFallback)
+	s.r.HandleFunc("/api/v1/metadata", s.getMetadata)
+
+	s.r.NotFoundHandler = http.HandlerFunc(s.handleFallback)
 }
 
 func (s *Server) Start() {

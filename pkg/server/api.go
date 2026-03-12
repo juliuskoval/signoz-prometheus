@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -328,9 +329,55 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 	s.writeHttpResponse(w, result)
 }
 
+func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
+	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	metric := r.URL.Query().Get("metric")
+	if metric == "" {
+		http.Error(w, "404: Not found", http.StatusNotImplemented)
+	}
+
+	apiURL := fmt.Sprintf("%s/api/v1/metrics/%s/metadata", s.signozBaseURL, metric)
+	resp, err := s.callSignozApi(r, http.MethodGet, apiURL, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiURL), zap.Error(err))
+		return
+	}
+	defer resp.Body.Close()
+
+	response, err := readBody(resp)
+	if err != nil {
+		zap.L().Error("Failed to read response from SigNoz API", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	var metadata metrics_explorer.MetricDetailsDTO
+	jsonBytes, err := json.Marshal(response.Data)
+	if err != nil {
+		zap.L().Error("Failed to marshal response data", zap.Error(err))
+		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
+		return
+	}
+	if err := json.Unmarshal(jsonBytes, &metadata); err != nil {
+		zap.L().Error("Failed to unmarshal response from SigNoz", zap.Error(err))
+		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
+		return
+	}
+
+	data := make(map[string][]description)
+	data[metric] = []description{
+		{
+			Type: metadata.Type, Help: metadata.Description, Unit: metadata.Unit,
+		},
+	}
+
+	s.writeHttpResponse(w, data)
+}
+
 func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
 	zap.L().Warn("Unhandled route", zap.String("url.path", r.RequestURI))
-	http.Error(w, "No handler defined for the route", http.StatusNotImplemented)
+	http.Error(w, "404: Not found", http.StatusNotImplemented)
 }
 
 func (s *Server) writeHttpResponse(w http.ResponseWriter, data any) {
@@ -410,4 +457,10 @@ type fieldKeysResponse struct {
 type fieldValuesResponse struct {
 	Values   *telemetrytypes.TelemetryFieldValues `json:"values"`
 	Complete bool                                 `json:"complete"`
+}
+
+type description struct {
+	Type string `json:"type"`
+	Help string `json:"help"`
+	Unit string `json:"unit"`
 }
