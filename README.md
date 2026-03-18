@@ -16,7 +16,7 @@ As of version 0.103.0, SigNoz can be used as a Prometheus data source in Grafana
 
 Then if you press Save & test, the data source should work.
 
-Now you should be able to create a new visualization with this data source and query SigNoz. Unfortunately SigNoz doesn't implement the APIs which Grafana uses for suggesting existing time series and labels, so you can't use those features.
+Now you should be able to create a new visualization with this data source and query SigNoz. Unfortunately SigNoz doesn't implement the APIs which Grafana uses for suggesting existing time series and labels, so you can't use those features out of the box.
 
 This app implements those missing APIs and acts as a proxy between Grafana and SigNoz. If you deploy it and point the Prometheus data source to the Docker container with other settings set according to the instructions above, the proxy will call the existing SigNoz API and return data in the Prometheus-compatible format. Then you should be able to see suggestions for existing metrics and labels in Grafana when creating a visualization. I haven't tested the proxy thoroughly with Drilldown.
 
