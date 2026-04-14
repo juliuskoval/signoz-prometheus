@@ -1,5 +1,7 @@
 package server
 
+import "github.com/SigNoz/signoz/pkg/types/metrictypes"
+
 // Types reproduced from github.com/SigNoz/signoz to avoid pulling in the
 // entire SigNoz module as a dependency.  Only the fields actually used by
 // this proxy are included; unused fields are omitted intentionally.
@@ -62,4 +64,19 @@ type MetricDetailsDTO struct {
 	Description string `json:"description"`
 	Type        string `json:"type"`
 	Unit        string `json:"unit"`
+}
+
+// --- metricsexplorertypes ---
+
+type ListMetricsResponse struct {
+	Metrics []ListMetric `json:"metrics" required:"true" nullable:"true"`
+}
+
+type ListMetric struct {
+	MetricName  string                  `json:"metricName" required:"true"`
+	Description string                  `json:"description" required:"true"`
+	MetricType  metrictypes.Type        `json:"type" required:"true"`
+	MetricUnit  string                  `json:"unit" required:"true"`
+	Temporality metrictypes.Temporality `json:"temporality" required:"true"`
+	IsMonotonic bool                    `json:"isMonotonic" required:"true"`
 }

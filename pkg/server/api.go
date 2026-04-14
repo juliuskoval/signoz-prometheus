@@ -23,6 +23,12 @@ const (
 	nameField     string = "__name__"
 )
 
+var v2 bool
+
+func (s *Server) initialize() {
+	v2 = true // TODO
+}
+
 func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
 	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
 	apiURL := s.signozBaseURL + r.URL.Path
@@ -236,6 +242,11 @@ func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
+	if v2 {
+		s.getMetricsV2(w, r)
+		return
+	}
+
 	apiURL := s.signozBaseURL + "/api/v1/metrics"
 	match := r.URL.Query().Get("match[]")
 
@@ -306,6 +317,74 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var metrics SummaryListMetricsResponse
+	jsonBytes, err := json.Marshal(response.Data)
+	if err != nil {
+		zap.L().Error("Failed to marshal response data", zap.Error(err))
+		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
+		return
+	}
+	if err := json.Unmarshal(jsonBytes, &metrics); err != nil {
+		zap.L().Error("Failed to unmarshal response from SigNoz", zap.Error(err))
+		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
+		return
+	}
+
+	result := make([]string, 0, len(metrics.Metrics))
+	for _, v := range metrics.Metrics {
+		result = append(result, v.MetricName)
+	}
+
+	s.writeHttpResponse(w, result)
+}
+
+func (s *Server) getMetricsV2(w http.ResponseWriter, r *http.Request) {
+	url := s.signozBaseURL + "/api/v2/metrics?"
+	match := r.URL.Query().Get("match[]")
+
+	if start := r.URL.Query().Get("start"); start != "" {
+		url += "&start=" + start + "000"
+	}
+
+	if end := r.URL.Query().Get("end"); end != "" {
+		url += "&end=" + end + "000"
+	}
+
+	url += "&limit=1000"
+
+	if match != "" {
+		matcher, err := parser.ParseMetricSelector(match)
+		if err != nil {
+			zap.L().Error("Failed to parse matcher", zap.Error(err), zap.String("url.path", r.RequestURI))
+		}
+
+		for _, v := range matcher {
+			if v.Name == nameField {
+				switch v.Type {
+				case labels.MatchEqual:
+					url += "&searchText=" + v.Value
+				case labels.MatchRegexp:
+					url += "&searchText=" + strings.ReplaceAll(v.Value, ".*", "")
+				}
+			}
+		}
+	}
+
+	resp, err := s.callSignozApi(r, http.MethodGet, url, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", url), zap.Error(err))
+		return
+	}
+	defer resp.Body.Close()
+
+	response, err := readBody(resp)
+	if err != nil {
+		zap.L().Error("Failed to read response from SigNoz API", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	var metrics ListMetricsResponse
 	jsonBytes, err := json.Marshal(response.Data)
 	if err != nil {
 		zap.L().Error("Failed to marshal response data", zap.Error(err))

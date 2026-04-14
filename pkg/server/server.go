@@ -74,6 +74,8 @@ func (s *Server) Start() {
 		Handler: s.r,
 	}
 
+	s.initialize()
+
 	idleConnsClosed := make(chan struct{})
 	go func() {
 		sigCh := make(chan os.Signal, 1)
