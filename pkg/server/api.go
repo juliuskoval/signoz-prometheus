@@ -519,24 +519,3 @@ func (s *Server) callSignozApi(r *http.Request, method string, apiURL string, bo
 	zap.L().Info("Sending an HTTP request", zap.String("url.full", apiURL))
 	return s.httpClient.Do(req)
 }
-
-type apiResponse struct {
-	Status string `json:"status"`
-	Data   any    `json:"data,omitempty"`
-}
-
-type fieldKeysResponse struct {
-	Keys     map[string][]*TelemetryFieldKey `json:"keys"`
-	Complete bool                            `json:"complete"`
-}
-
-type fieldValuesResponse struct {
-	Values   *TelemetryFieldValues `json:"values"`
-	Complete bool                  `json:"complete"`
-}
-
-type description struct {
-	Type string `json:"type"`
-	Help string `json:"help"`
-	Unit string `json:"unit"`
-}

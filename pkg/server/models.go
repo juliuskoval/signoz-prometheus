@@ -6,7 +6,28 @@ import "github.com/SigNoz/signoz/pkg/types/metrictypes"
 // entire SigNoz module as a dependency.  Only the fields actually used by
 // this proxy are included; unused fields are omitted intentionally.
 
+type apiResponse struct {
+	Status string `json:"status"`
+	Data   any    `json:"data,omitempty"`
+}
+
+type description struct {
+	Type string `json:"type"`
+	Help string `json:"help"`
+	Unit string `json:"unit"`
+}
+
 // --- telemetrytypes ---
+
+type fieldKeysResponse struct {
+	Keys     map[string][]*TelemetryFieldKey `json:"keys"`
+	Complete bool                            `json:"complete"`
+}
+
+type fieldValuesResponse struct {
+	Values   *TelemetryFieldValues `json:"values"`
+	Complete bool                  `json:"complete"`
+}
 
 type TelemetryFieldKey struct {
 	Name string `json:"name"`
