@@ -11,9 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/SigNoz/signoz/pkg/query-service/model/metrics_explorer"
-	v3 "github.com/SigNoz/signoz/pkg/query-service/model/v3"
-	"github.com/SigNoz/signoz/pkg/types/telemetrytypes"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
@@ -242,7 +239,7 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 	apiURL := s.signozBaseURL + "/api/v1/metrics"
 	match := r.URL.Query().Get("match[]")
 
-	req := metrics_explorer.SummaryListMetricsRequest{}
+	req := SummaryListMetricsRequest{}
 	req.Limit = 1000
 
 	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
@@ -259,26 +256,26 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 			zap.L().Error("Failed to parse matcher", zap.Error(err), zap.String("url.path", r.RequestURI))
 		}
 
-		fs := v3.FilterSet{}
+		fs := FilterSet{}
 		for _, v := range matcher {
 			if v.Name == nameField {
-				item := v3.FilterItem{
-					Key: v3.AttributeKey{
+				item := FilterItem{
+					Key: AttributeKey{
 						Key: "metric_name",
 					},
 				}
 				switch v.Type {
 				case labels.MatchEqual:
-					item.Operator = v3.FilterOperatorEqual
+					item.Operator = FilterOperatorEqual
 					item.Value = v.Value
 				case labels.MatchNotEqual:
-					item.Operator = v3.FilterOperatorNotEqual
+					item.Operator = FilterOperatorNotEqual
 					item.Value = v.Value
 				case labels.MatchRegexp:
-					item.Operator = v3.FilterOperatorContains
+					item.Operator = FilterOperatorContains
 					item.Value = strings.ReplaceAll(v.Value, ".*", "")
 				case labels.MatchNotRegexp:
-					item.Operator = v3.FilterOperatorNotContains
+					item.Operator = FilterOperatorNotContains
 					item.Value = strings.ReplaceAll(v.Value, ".*", "")
 				}
 				fs.Items = append(fs.Items, item)
@@ -308,7 +305,7 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var metrics metrics_explorer.SummaryListMetricsResponse
+	var metrics SummaryListMetricsResponse
 	jsonBytes, err := json.Marshal(response.Data)
 	if err != nil {
 		zap.L().Error("Failed to marshal response data", zap.Error(err))
@@ -352,7 +349,7 @@ func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var metadata metrics_explorer.MetricDetailsDTO
+	var metadata MetricDetailsDTO
 	jsonBytes, err := json.Marshal(response.Data)
 	if err != nil {
 		zap.L().Error("Failed to marshal response data", zap.Error(err))
@@ -450,13 +447,13 @@ type apiResponse struct {
 }
 
 type fieldKeysResponse struct {
-	Keys     map[string][]*telemetrytypes.TelemetryFieldKey `json:"keys"`
-	Complete bool                                           `json:"complete"`
+	Keys     map[string][]*TelemetryFieldKey `json:"keys"`
+	Complete bool                            `json:"complete"`
 }
 
 type fieldValuesResponse struct {
-	Values   *telemetrytypes.TelemetryFieldValues `json:"values"`
-	Complete bool                                 `json:"complete"`
+	Values   *TelemetryFieldValues `json:"values"`
+	Complete bool                  `json:"complete"`
 }
 
 type description struct {
