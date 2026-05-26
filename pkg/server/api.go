@@ -31,15 +31,15 @@ func (s *Server) initialize() {
 
 func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
 	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
-	apiURL := s.signozBaseURL + r.URL.Path
+	apiUrl := s.signozBaseURL + r.URL.Path
 	if r.URL.RawQuery != "" {
-		apiURL += "?" + r.URL.RawQuery
+		apiUrl += "?" + r.URL.RawQuery
 	}
 
-	resp, err := s.callSignozApi(r, http.MethodGet, apiURL, nil)
+	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiURL), zap.Error(err))
+		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -61,14 +61,14 @@ func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getQueryRange(w http.ResponseWriter, r *http.Request) {
 	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
 
-	apiURL := s.signozBaseURL + r.URL.Path
+	apiUrl := s.signozBaseURL + r.URL.Path
 	if r.URL.RawQuery != "" {
-		apiURL += "?" + r.URL.RawQuery
+		apiUrl += "?" + r.URL.RawQuery
 	}
-	resp, err := s.callSignozApi(r, http.MethodGet, apiURL, nil)
+	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiURL), zap.Error(err))
+		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -118,12 +118,12 @@ func (s *Server) getLabels(w http.ResponseWriter, r *http.Request) {
 		params.Set("endUnixMilli", strconv.FormatInt(end*1000, 10))
 	}
 
-	apiURL := s.signozBaseURL + "/api/v1/fields/keys?" + params.Encode()
+	apiUrl := s.signozBaseURL + "/api/v1/fields/keys?" + params.Encode()
 
-	resp, err := s.callSignozApi(r, http.MethodGet, apiURL, nil)
+	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiURL), zap.Error(err))
+		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -203,12 +203,12 @@ func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	apiURL := s.signozBaseURL + "/api/v1/fields/values?" + params.Encode()
+	apiUrl := s.signozBaseURL + "/api/v1/fields/values?" + params.Encode()
 
-	resp, err := s.callSignozApi(r, http.MethodGet, apiURL, nil)
+	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiURL), zap.Error(err))
+		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -247,7 +247,7 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiURL := s.signozBaseURL + "/api/v1/metrics"
+	apiUrl := s.signozBaseURL + "/api/v1/metrics"
 	match := r.URL.Query().Get("match[]")
 
 	req := SummaryListMetricsRequest{}
@@ -301,10 +301,10 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.callSignozApi(r, http.MethodPost, apiURL, data)
+	resp, err := s.callSignozApi(r, http.MethodPost, apiUrl, data)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiURL), zap.Error(err))
+		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -412,11 +412,11 @@ func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "404: Not found", http.StatusNotImplemented)
 	}
 
-	apiURL := fmt.Sprintf("%s/api/v1/metrics/%s/metadata", s.signozBaseURL, metric)
-	resp, err := s.callSignozApi(r, http.MethodGet, apiURL, nil)
+	apiUrl := fmt.Sprintf("%s/api/v1/metrics/%s/metadata", s.signozBaseURL, metric)
+	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiURL), zap.Error(err))
+		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -499,9 +499,9 @@ func readBody(r *http.Response) (apiResponse, error) {
 	return response, nil
 }
 
-func (s *Server) callSignozApi(r *http.Request, method string, apiURL string, body []byte) (*http.Response, error) {
+func (s *Server) callSignozApi(r *http.Request, method string, apiUrl string, body []byte) (*http.Response, error) {
 	var resp *http.Response
-	req, err := http.NewRequest(method, apiURL, bytes.NewBuffer(body))
+	req, err := http.NewRequest(method, apiUrl, bytes.NewBuffer(body))
 	if err != nil {
 		return resp, err
 	}
@@ -516,6 +516,6 @@ func (s *Server) callSignozApi(r *http.Request, method string, apiURL string, bo
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	zap.L().Info("Sending an HTTP request", zap.String("url.full", apiURL))
+	zap.L().Info("Sending an HTTP request", zap.String("url.full", apiUrl))
 	return s.httpClient.Do(req)
 }
