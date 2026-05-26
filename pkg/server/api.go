@@ -3,13 +3,16 @@ package server
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/common/model"
@@ -23,10 +26,43 @@ const (
 	nameField     string = "__name__"
 )
 
+// hop-by-hop headers must not be forwarded by an intermediary (RFC 7230 §6.1).
+var hopByHopHeaders = map[string]struct{}{
+	"Connection":          {},
+	"Keep-Alive":          {},
+	"Proxy-Authenticate":  {},
+	"Proxy-Authorization": {},
+	"Te":                  {},
+	"Trailer":             {},
+	"Transfer-Encoding":   {},
+	"Upgrade":             {},
+}
+
+func copyHeaders(dst, src http.Header) {
+	for key, values := range src {
+		if _, hop := hopByHopHeaders[http.CanonicalHeaderKey(key)]; hop {
+			continue
+		}
+		for _, value := range values {
+			dst.Add(key, value)
+		}
+	}
+}
+
 var v2 bool = true
 
 func (s *Server) initialize() {
-	resp, err := s.httpClient.Get(s.signozBaseURL + "/api/v2/metrics")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.signozBaseURL+"/api/v2/metrics", nil)
+	if err != nil {
+		zap.L().Warn("Failed to build /api/v2/metrics probe request, falling back to v1", zap.Error(err))
+		v2 = false
+		return
+	}
+
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		zap.L().Warn("Failed to probe /api/v2/metrics, falling back to v1", zap.Error(err))
 		v2 = false
@@ -55,11 +91,7 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	for key, values := range resp.Header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
+	copyHeaders(w.Header(), resp.Header)
 
 	w.WriteHeader(resp.StatusCode)
 
@@ -84,11 +116,7 @@ func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	for key, values := range resp.Header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
+	copyHeaders(w.Header(), resp.Header)
 
 	w.WriteHeader(resp.StatusCode)
 
@@ -100,6 +128,12 @@ func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getQueryRange(w http.ResponseWriter, r *http.Request) {
 	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+
+	if err := sanitizeQuery(r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		zap.L().Error("Failed to parse request", zap.Error(err))
+		return
+	}
 
 	apiUrl := s.signozBaseURL + r.URL.Path
 	if r.URL.RawQuery != "" {
@@ -113,11 +147,7 @@ func (s *Server) getQueryRange(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	for key, values := range resp.Header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
+	copyHeaders(w.Header(), resp.Header)
 
 	w.WriteHeader(resp.StatusCode)
 
@@ -134,6 +164,7 @@ func (s *Server) getLabels(w http.ResponseWriter, r *http.Request) {
 	params.Set("signal", "metrics")
 
 	match := r.URL.Query().Get("match[]")
+	match = strings.ReplaceAll(match, "\"\"", "\"")
 
 	matcher, err := parser.ParseMetricSelector(match)
 	if err != nil {
@@ -168,6 +199,10 @@ func (s *Server) getLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	if s.forwardUpstreamError(w, resp) {
+		return
+	}
+
 	response, err := readBody(resp)
 	if err != nil {
 		zap.L().Error("Failed to read response from SigNoz API", zap.Error(err))
@@ -189,6 +224,9 @@ func (s *Server) getLabels(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]string, 0, len(keys.Keys))
 	for _, v := range keys.Keys {
+		if len(v) == 0 || v[0] == nil {
+			continue
+		}
 		result = append(result, v[0].Name)
 	}
 
@@ -211,6 +249,7 @@ func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
 	params.Set("name", label)
 
 	match := r.URL.Query().Get("match[]")
+	match = strings.ReplaceAll(match, "\"\"", "\"")
 
 	if match != "" {
 		matcher, err := parser.ParseMetricSelector(match)
@@ -252,6 +291,10 @@ func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+
+	if s.forwardUpstreamError(w, resp) {
+		return
+	}
 
 	response, err := readBody(resp)
 	if err != nil {
@@ -338,6 +381,7 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 	data, err := json.Marshal(req)
 	if err != nil {
 		zap.L().Error("Failed to marshal request", zap.Error(err))
+		http.Error(w, "failed to build upstream request", http.StatusInternalServerError)
 		return
 	}
 
@@ -348,6 +392,10 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+
+	if s.forwardUpstreamError(w, resp) {
+		return
+	}
 
 	response, err := readBody(resp)
 	if err != nil {
@@ -378,19 +426,18 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getMetricsV2(w http.ResponseWriter, r *http.Request) {
-	url := s.signozBaseURL + "/api/v2/metrics?"
+	params := url.Values{}
+	params.Set("limit", "1000")
+
+	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
+		params.Set("start", strconv.FormatInt(start*1000, 10))
+	}
+
+	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
+		params.Set("end", strconv.FormatInt(end*1000, 10))
+	}
+
 	match := r.URL.Query().Get("match[]")
-
-	if start := r.URL.Query().Get("start"); start != "" {
-		url += "&start=" + start + "000"
-	}
-
-	if end := r.URL.Query().Get("end"); end != "" {
-		url += "&end=" + end + "000"
-	}
-
-	url += "&limit=1000"
-
 	if match != "" {
 		matcher, err := parser.ParseMetricSelector(match)
 		if err != nil {
@@ -401,21 +448,27 @@ func (s *Server) getMetricsV2(w http.ResponseWriter, r *http.Request) {
 			if v.Name == nameField {
 				switch v.Type {
 				case labels.MatchEqual:
-					url += "&searchText=" + v.Value
+					params.Set("searchText", v.Value)
 				case labels.MatchRegexp:
-					url += "&searchText=" + strings.ReplaceAll(v.Value, ".*", "")
+					params.Set("searchText", strings.ReplaceAll(v.Value, ".*", ""))
 				}
 			}
 		}
 	}
 
-	resp, err := s.callSignozApi(r, http.MethodGet, url, nil)
+	apiUrl := s.signozBaseURL + "/api/v2/metrics?" + params.Encode()
+
+	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", url), zap.Error(err))
+		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
+
+	if s.forwardUpstreamError(w, resp) {
+		return
+	}
 
 	response, err := readBody(resp)
 	if err != nil {
@@ -449,10 +502,11 @@ func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
 	metric := r.URL.Query().Get("metric")
 	if metric == "" {
-		http.Error(w, "404: Not found", http.StatusNotImplemented)
+		http.Error(w, "metric query parameter is required", http.StatusBadRequest)
+		return
 	}
 
-	apiUrl := fmt.Sprintf("%s/api/v1/metrics/%s/metadata", s.signozBaseURL, metric)
+	apiUrl := fmt.Sprintf("%s/api/v1/metrics/%s/metadata", s.signozBaseURL, url.PathEscape(metric))
 	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -460,6 +514,10 @@ func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+
+	if s.forwardUpstreamError(w, resp) {
+		return
+	}
 
 	response, err := readBody(resp)
 	if err != nil {
@@ -493,7 +551,22 @@ func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
 	zap.L().Warn("Unhandled route", zap.String("url.path", r.RequestURI))
-	http.Error(w, "404: Not found", http.StatusNotImplemented)
+	http.Error(w, "404: Not found", http.StatusNotFound)
+}
+
+// forwardUpstreamError returns true (after copying the response through to w)
+// if resp is a non-2xx, so the caller should stop processing. Callers that
+// parse the body otherwise mask SigNoz errors as 200 OK empty results.
+func (s *Server) forwardUpstreamError(w http.ResponseWriter, resp *http.Response) bool {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return false
+	}
+	copyHeaders(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		zap.L().Error("Error copying upstream error body", zap.Error(err))
+	}
+	return true
 }
 
 func (s *Server) writeHttpResponse(w http.ResponseWriter, data any) {
@@ -506,6 +579,27 @@ func (s *Server) writeHttpResponse(w http.ResponseWriter, data any) {
 	}); err != nil {
 		zap.L().Error("Failed to write response", zap.Error(err))
 	}
+}
+
+// sanitizeQuery strips two PromQL artifacts the upstream parser rejects:
+// an `__ignore_usage__=""` selector and doubled quotes from over-encoded
+// labels. Only applied when the query fails to parse as-is.
+func sanitizeQuery(r *http.Request) error {
+	q := r.URL.Query().Get("query")
+	if _, err := parser.ParseExpr(q); err == nil {
+		return nil
+	}
+
+	q = strings.ReplaceAll(q, "__ignore_usage__=\"\", ", "")
+	q = strings.ReplaceAll(q, "\"\"", "\"")
+	if _, err := parser.ParseExpr(q); err != nil {
+		return errors.New("Failed to parse query value " + q)
+	}
+
+	query := r.URL.Query()
+	query.Set("query", q)
+	r.URL.RawQuery = query.Encode()
+	return nil
 }
 
 func readBody(r *http.Response) (apiResponse, error) {
@@ -546,11 +640,7 @@ func (s *Server) callSignozApi(r *http.Request, method string, apiUrl string, bo
 		return resp, err
 	}
 
-	for key, values := range r.Header {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
-	}
+	copyHeaders(req.Header, r.Header)
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

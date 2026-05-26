@@ -48,8 +48,13 @@ func BuildServer() *Server {
 	return server
 }
 
-func buildTLSConfig() (*tls.Config, error) { // TODO
-	return &tls.Config{InsecureSkipVerify: true}, nil
+func buildTLSConfig() (*tls.Config, error) {
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if os.Getenv("SIGNOZ_TLS_SKIP_VERIFY") == "true" {
+		zap.L().Warn("TLS certificate verification disabled (SIGNOZ_TLS_SKIP_VERIFY=true)")
+		cfg.InsecureSkipVerify = true
+	}
+	return cfg, nil
 }
 
 func (s *Server) RegisterRoutes() {
