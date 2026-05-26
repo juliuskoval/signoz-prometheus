@@ -23,10 +23,50 @@ const (
 	nameField     string = "__name__"
 )
 
-var v2 bool
+var v2 bool = true
 
 func (s *Server) initialize() {
-	v2 = true // TODO
+	resp, err := s.httpClient.Get(s.signozBaseURL + "/api/v2/metrics")
+	if err != nil {
+		zap.L().Warn("Failed to probe /api/v2/metrics, falling back to v1", zap.Error(err))
+		v2 = false
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		zap.L().Info("/api/v2/metrics not available, falling back to v1")
+		v2 = false
+		return
+	}
+
+	zap.L().Info("/api/v2/metrics available, using v2")
+}
+
+func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
+	zap.L().Debug("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	apiUrl := s.signozBaseURL + "/api/v1/health"
+
+	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
+		return
+	}
+	defer resp.Body.Close()
+
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	w.WriteHeader(resp.StatusCode)
+
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		zap.L().Error("Error copying response body", zap.Error(err))
+	}
 }
 
 func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {

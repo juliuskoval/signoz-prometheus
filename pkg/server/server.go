@@ -53,6 +53,7 @@ func buildTLSConfig() (*tls.Config, error) { // TODO
 }
 
 func (s *Server) RegisterRoutes() {
+	s.r.HandleFunc("/healthz", s.getHealth)
 	s.r.HandleFunc("/api/v1/query", s.getQuery)
 	s.r.HandleFunc("/api/v1/query_range", s.getQueryRange)
 	s.r.HandleFunc("/api/v1/labels", s.getLabels)
