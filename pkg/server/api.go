@@ -291,6 +291,10 @@ func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for i, v := range values.Values.StringValues {
+		values.Values.StringValues[i] = strings.ReplaceAll(v, `\`, `\\`)
+	}
+
 	s.writeHttpResponse(w, values.Values.StringValues)
 }
 
