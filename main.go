@@ -30,6 +30,10 @@ func buildLogger() *zap.Logger {
 
 	cfg := zap.NewProductionConfig()
 	cfg.Level = zap.NewAtomicLevelAt(level)
+	// NewProductionConfig writes every level to stderr, which VS Code's debug
+	// console renders in red. Send logs to stdout so info/warn aren't colored
+	// as errors (zap's own internal errors still go to ErrorOutputPaths/stderr).
+	cfg.OutputPaths = []string{"stdout"}
 	log, _ := cfg.Build()
 	return log
 }
