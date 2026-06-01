@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,43 +10,21 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
+	qb "github.com/juliuskoval/signoz-prometheus/pkg/querybuilder"
+	"github.com/juliuskoval/signoz-prometheus/pkg/util"
 	"github.com/prometheus/common/model"
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 	"go.uber.org/zap"
 )
 
 const (
-	statusSuccess string = "success"
-	nameField     string = "__name__"
+	statusSuccess        = "success"
+	nameField            = qb.PrometheusMetricName
+	defaultQueryLookback = time.Hour
 )
-
-// hop-by-hop headers must not be forwarded by an intermediary (RFC 7230 §6.1).
-var hopByHopHeaders = map[string]struct{}{
-	"Connection":          {},
-	"Keep-Alive":          {},
-	"Proxy-Authenticate":  {},
-	"Proxy-Authorization": {},
-	"Te":                  {},
-	"Trailer":             {},
-	"Transfer-Encoding":   {},
-	"Upgrade":             {},
-}
-
-func copyHeaders(dst, src http.Header) {
-	for key, values := range src {
-		if _, hop := hopByHopHeaders[http.CanonicalHeaderKey(key)]; hop {
-			continue
-		}
-		for _, value := range values {
-			dst.Add(key, value)
-		}
-	}
-}
-
-var v2 bool = true
 
 func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 	zap.L().Debug("Received an HTTP request", zap.String("url.full", r.RequestURI))
@@ -61,7 +38,7 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	copyHeaders(w.Header(), resp.Header)
+	util.CopyHeaders(w.Header(), resp.Header)
 
 	w.WriteHeader(resp.StatusCode)
 
@@ -86,7 +63,7 @@ func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	copyHeaders(w.Header(), resp.Header)
+	util.CopyHeaders(w.Header(), resp.Header)
 
 	w.WriteHeader(resp.StatusCode)
 
@@ -117,7 +94,7 @@ func (s *Server) getQueryRange(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	copyHeaders(w.Header(), resp.Header)
+	util.CopyHeaders(w.Header(), resp.Header)
 
 	w.WriteHeader(resp.StatusCode)
 
@@ -130,77 +107,152 @@ func (s *Server) getQueryRange(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getLabels(w http.ResponseWriter, r *http.Request) {
 	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
 
-	params := url.Values{}
-	params.Set("signal", "metrics")
-
-	match := r.URL.Query().Get("match[]")
-	match = strings.ReplaceAll(match, "\"\"", "\"")
-
-	matcher, err := parser.ParseMetricSelector(match)
+	query, err := qb.BuildGetLabelsQuery(r.URL.Query())
 	if err != nil {
-		zap.L().Warn("Failed to parse matcher", zap.Error(err), zap.String("url.path", r.RequestURI))
-	}
-
-	for _, v := range matcher {
-		if v.Name == nameField && v.Type == labels.MatchEqual {
-			params.Set("metricName", v.Value)
-		} else if v.Name == nameField && v.Type == labels.MatchRegexp {
-			metricName := strings.ReplaceAll(v.Value, ".*", "")
-			metricName = strings.ReplaceAll(metricName, ".+", "")
-			params.Set("metricName", metricName)
-		}
-	}
-
-	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
-		params.Set("startUnixMilli", strconv.FormatInt(start*1000, 10))
-	}
-
-	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
-		params.Set("endUnixMilli", strconv.FormatInt(end*1000, 10))
-	}
-
-	apiUrl := s.signozBaseURL + "/api/v1/fields/keys?" + params.Encode()
-
-	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
+		zap.L().Warn("Invalid request", zap.Error(err), zap.String("url.path", r.RequestURI))
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	rows, err := s.runClickHouseQuery(r, query)
+	if err != nil {
+		zap.L().Error("ClickHouse query failed", zap.Error(err), zap.String("query", query))
+		writeUpstreamError(w, err)
+		return
+	}
+
+	result := make([]string, 0, len(rows))
+	for _, row := range rows {
+		name, ok := row.Data["label_name"].(string)
+		if !ok || name == "" {
+			continue
+		}
+		// Drop reserved pseudo-labels (e.g. __scope.name__, __temporality__);
+		// keep __name__, which Prometheus clients expect from /labels.
+		if name != nameField && strings.HasPrefix(name, "__") && strings.HasSuffix(name, "__") {
+			continue
+		}
+		result = append(result, name)
+	}
+
+	s.writeHttpResponse(w, result)
+}
+
+// runClickHouseQuery executes a raw ClickHouse SQL statement through SigNoz's
+// query_range API (queryType clickhouse_sql, table panel) and returns the
+// result rows.
+func (s *Server) runClickHouseQuery(r *http.Request, query string) ([]QueryRow, error) {
+	zap.L().Info("Executing ClickHouse query", zap.String("query", query))
+
+	reqBody := QueryRangeRequest{
+		Step: 60,
+		CompositeQuery: CompositeQuery{
+			QueryType: "clickhouse_sql",
+			PanelType: "table",
+			ChQueries: map[string]ClickHouseQuery{
+				"A": {Query: query},
+			},
+		},
+	}
+
+	end := time.Now().UnixMilli()
+	if e, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
+		end = e * 1000
+	}
+	start := end - defaultQueryLookback.Milliseconds()
+	if s, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
+		start = s * 1000
+	}
+	reqBody.Start = start
+	reqBody.End = end
+
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build query_range request: %w", err)
+	}
+
+	apiUrl := s.signozBaseURL + "/api/v4/query_range"
+	resp, err := s.callSignozApi(r, http.MethodPost, apiUrl, data)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if s.forwardUpstreamError(w, resp) {
-		return
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := util.ReadRawBody(resp)
+		return nil, &upstreamError{
+			statusCode:  resp.StatusCode,
+			contentType: resp.Header.Get("Content-Type"),
+			body:        body,
+		}
 	}
 
 	response, err := readBody(resp)
 	if err != nil {
-		zap.L().Error("Failed to read response from SigNoz API", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
+		return nil, err
 	}
 
-	var keys fieldKeysResponse
 	jsonBytes, err := json.Marshal(response.Data)
 	if err != nil {
-		zap.L().Error("Failed to marshal response data", zap.Error(err))
-		http.Error(w, "backend JSON format mismatch", http.StatusInternalServerError)
-		return
-	}
-	if err := json.Unmarshal(jsonBytes, &keys); err != nil {
-		http.Error(w, "backend JSON format mismatch", http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to marshal response data: %w", err)
 	}
 
-	result := make([]string, 0, len(keys.Keys))
-	for _, v := range keys.Keys {
-		if len(v) == 0 || v[0] == nil {
-			continue
+	var qr QueryRangeResponse
+	if err := json.Unmarshal(jsonBytes, &qr); err != nil {
+		return nil, fmt.Errorf("backend JSON format mismatch: %w", err)
+	}
+
+	return extractRows(qr), nil
+}
+
+// extractRows flattens a query_range result into rows. A clickhouse_sql result
+// arrives as series (each string column carried as a label), while list/table
+// panels carry the columns directly under Data; we read all three so the same
+// query works regardless of how SigNoz formatted it.
+func extractRows(qr QueryRangeResponse) []QueryRow {
+	var rows []QueryRow
+	for _, res := range qr.Result {
+		rows = append(rows, res.List...)
+		if res.Table != nil {
+			rows = append(rows, res.Table.Rows...)
 		}
-		result = append(result, v[0].Name)
+		for _, sr := range res.Series {
+			data := make(map[string]any, len(sr.Labels))
+			for k, v := range sr.Labels {
+				data[k] = v
+			}
+			rows = append(rows, QueryRow{Data: data})
+		}
 	}
+	return rows
+}
 
-	s.writeHttpResponse(w, result)
+type upstreamError struct {
+	statusCode  int
+	contentType string
+	body        []byte
+}
+
+func (e *upstreamError) Error() string {
+	return fmt.Sprintf("upstream returned %d: %s", e.statusCode, e.body)
+}
+
+// writeUpstreamError relays an error from runClickHouseQuery: a non-2xx SigNoz
+// response is passed through with its original status and body; transport or
+// decoding failures become 502 Bad Gateway.
+func writeUpstreamError(w http.ResponseWriter, err error) {
+	var ue *upstreamError
+	if errors.As(err, &ue) {
+		if ue.contentType != "" {
+			w.Header().Set("Content-Type", ue.contentType)
+		}
+		w.WriteHeader(ue.statusCode)
+		if _, werr := w.Write(ue.body); werr != nil {
+			zap.L().Error("Failed to write upstream error response", zap.Error(werr))
+		}
+		return
+	}
+	http.Error(w, err.Error(), http.StatusBadGateway)
 }
 
 func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
@@ -214,259 +266,50 @@ func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := url.Values{}
-	params.Set("signal", "metrics")
-	params.Set("name", label)
+	query, err := qb.BuildGetLabelValuesQuery(label, r.URL.Query())
+	if err != nil {
+		zap.L().Warn("Invalid request", zap.Error(err), zap.String("url.path", r.RequestURI))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-	match := r.URL.Query().Get("match[]")
-	match = strings.ReplaceAll(match, "\"\"", "\"")
+	rows, err := s.runClickHouseQuery(r, query)
+	if err != nil {
+		zap.L().Error("ClickHouse query failed", zap.Error(err), zap.String("query", query))
+		writeUpstreamError(w, err)
+		return
+	}
 
-	if match != "" {
-		matcher, err := parser.ParseMetricSelector(match)
-		if err != nil {
-			zap.L().Warn("Failed to parse matcher", zap.Error(err), zap.String("url", r.RequestURI))
+	result := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if value, ok := row.Data["label_value"].(string); ok && value != "" {
+			result = append(result, value)
 		}
-
-		for _, v := range matcher {
-			if v.Type == labels.MatchRegexp {
-				params.Set("searchText", strings.ReplaceAll(v.Value, ".*", ""))
-			} else if v.Type == labels.MatchEqual && v.Name == nameField {
-				params.Set("metricName", v.Value)
-			}
-		}
-	}
-
-	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
-		params.Set("startUnixMilli", strconv.FormatInt(start*1000, 10))
-	}
-
-	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
-		params.Set("endUnixMilli", strconv.FormatInt(end*1000, 10))
-	}
-
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if _, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
-			params.Set("limit", limitStr)
-		} else {
-			zap.L().Warn("Invalid limit parameter, ignoring", zap.String("limit", limitStr))
-		}
-	}
-
-	apiUrl := s.signozBaseURL + "/api/v1/fields/values?" + params.Encode()
-
-	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
-		return
-	}
-	defer resp.Body.Close()
-
-	if s.forwardUpstreamError(w, resp) {
-		return
-	}
-
-	response, err := readBody(resp)
-	if err != nil {
-		zap.L().Error("Failed to read response from SigNoz API", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	var values fieldValuesResponse
-	jsonBytes, err := json.Marshal(response.Data)
-	if err != nil {
-		zap.L().Error("Failed to marshal response data", zap.Error(err))
-		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-		return
-	}
-	if err := json.Unmarshal(jsonBytes, &values); err != nil {
-		zap.L().Error("Failed to unmarshal response from SigNoz", zap.Error(err))
-		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-		return
-	}
-
-	if values.Values == nil {
-		s.writeHttpResponse(w, []string{})
-		return
-	}
-
-	for i, v := range values.Values.StringValues {
-		values.Values.StringValues[i] = strings.ReplaceAll(v, `\`, `\\`)
-	}
-
-	s.writeHttpResponse(w, values.Values.StringValues)
-}
-
-func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
-	if v2 {
-		s.getMetricsV2(w, r)
-		return
-	}
-
-	apiUrl := s.signozBaseURL + "/api/v1/metrics"
-	match := r.URL.Query().Get("match[]")
-
-	req := SummaryListMetricsRequest{}
-	req.Limit = 1000
-
-	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
-		req.Start = start * 1000
-	}
-
-	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
-		req.End = end * 1000
-	}
-
-	if match != "" {
-		matcher, err := parser.ParseMetricSelector(match)
-		if err != nil {
-			zap.L().Error("Failed to parse matcher", zap.Error(err), zap.String("url.path", r.RequestURI))
-		}
-
-		fs := FilterSet{}
-		for _, v := range matcher {
-			if v.Name == nameField {
-				item := FilterItem{
-					Key: AttributeKey{
-						Key: "metric_name",
-					},
-				}
-				switch v.Type {
-				case labels.MatchEqual:
-					item.Operator = FilterOperatorEqual
-					item.Value = v.Value
-				case labels.MatchNotEqual:
-					item.Operator = FilterOperatorNotEqual
-					item.Value = v.Value
-				case labels.MatchRegexp:
-					item.Operator = FilterOperatorContains
-					item.Value = strings.ReplaceAll(v.Value, ".*", "")
-				case labels.MatchNotRegexp:
-					item.Operator = FilterOperatorNotContains
-					item.Value = strings.ReplaceAll(v.Value, ".*", "")
-				}
-				fs.Items = append(fs.Items, item)
-			}
-		}
-		req.Filters = fs
-	}
-
-	data, err := json.Marshal(req)
-	if err != nil {
-		zap.L().Error("Failed to marshal request", zap.Error(err))
-		http.Error(w, "failed to build upstream request", http.StatusInternalServerError)
-		return
-	}
-
-	resp, err := s.callSignozApi(r, http.MethodPost, apiUrl, data)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
-		return
-	}
-	defer resp.Body.Close()
-
-	if s.forwardUpstreamError(w, resp) {
-		return
-	}
-
-	response, err := readBody(resp)
-	if err != nil {
-		zap.L().Error("Failed to read response from SigNoz API", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	var metrics SummaryListMetricsResponse
-	jsonBytes, err := json.Marshal(response.Data)
-	if err != nil {
-		zap.L().Error("Failed to marshal response data", zap.Error(err))
-		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-		return
-	}
-	if err := json.Unmarshal(jsonBytes, &metrics); err != nil {
-		zap.L().Error("Failed to unmarshal response from SigNoz", zap.Error(err))
-		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-		return
-	}
-
-	result := make([]string, 0, len(metrics.Metrics))
-	for _, v := range metrics.Metrics {
-		result = append(result, v.MetricName)
 	}
 
 	s.writeHttpResponse(w, result)
 }
 
-func (s *Server) getMetricsV2(w http.ResponseWriter, r *http.Request) {
-	params := url.Values{}
-	params.Set("limit", "1000")
-
-	if start, err := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64); err == nil {
-		params.Set("start", strconv.FormatInt(start*1000, 10))
+func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
+	query, err := qb.BuildGetSeriesQuery(r.URL.Query())
+	if err != nil {
+		zap.L().Warn("Invalid request", zap.Error(err), zap.String("url.path", r.RequestURI))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
-	if end, err := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64); err == nil {
-		params.Set("end", strconv.FormatInt(end*1000, 10))
+	rows, err := s.runClickHouseQuery(r, query)
+	if err != nil {
+		zap.L().Error("ClickHouse query failed", zap.Error(err), zap.String("query", query))
+		writeUpstreamError(w, err)
+		return
 	}
 
-	match := r.URL.Query().Get("match[]")
-	if match != "" {
-		matcher, err := parser.ParseMetricSelector(match)
-		if err != nil {
-			zap.L().Error("Failed to parse matcher", zap.Error(err), zap.String("url.path", r.RequestURI))
+	result := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if name, ok := row.Data["metric_name"].(string); ok && name != "" {
+			result = append(result, name)
 		}
-
-		for _, v := range matcher {
-			if v.Name == nameField {
-				switch v.Type {
-				case labels.MatchEqual:
-					params.Set("searchText", v.Value)
-				case labels.MatchRegexp:
-					params.Set("searchText", strings.ReplaceAll(v.Value, ".*", ""))
-				}
-			}
-		}
-	}
-
-	apiUrl := s.signozBaseURL + "/api/v2/metrics?" + params.Encode()
-
-	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
-		return
-	}
-	defer resp.Body.Close()
-
-	if s.forwardUpstreamError(w, resp) {
-		return
-	}
-
-	response, err := readBody(resp)
-	if err != nil {
-		zap.L().Error("Failed to read response from SigNoz API", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	var metrics ListMetricsResponse
-	jsonBytes, err := json.Marshal(response.Data)
-	if err != nil {
-		zap.L().Error("Failed to marshal response data", zap.Error(err))
-		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-		return
-	}
-	if err := json.Unmarshal(jsonBytes, &metrics); err != nil {
-		zap.L().Error("Failed to unmarshal response from SigNoz", zap.Error(err))
-		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
-		return
-	}
-
-	result := make([]string, 0, len(metrics.Metrics))
-	for _, v := range metrics.Metrics {
-		result = append(result, v.MetricName)
 	}
 
 	s.writeHttpResponse(w, result)
@@ -535,7 +378,7 @@ func (s *Server) forwardUpstreamError(w http.ResponseWriter, resp *http.Response
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return false
 	}
-	copyHeaders(w.Header(), resp.Header)
+	util.CopyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		zap.L().Error("Error copying upstream error body", zap.Error(err))
@@ -567,7 +410,7 @@ func sanitizeQuery(r *http.Request) error {
 	q = strings.ReplaceAll(q, "__ignore_usage__=\"\", ", "")
 	q = strings.ReplaceAll(q, "\"\"", "\"")
 	if _, err := parser.ParseExpr(q); err != nil {
-		return errors.New("Failed to parse query value " + q)
+		return fmt.Errorf("failed to parse query value %q", q)
 	}
 
 	query := r.URL.Query()
@@ -578,26 +421,10 @@ func sanitizeQuery(r *http.Request) error {
 
 func readBody(r *http.Response) (apiResponse, error) {
 	var response apiResponse
-	var decompressed []byte
 
-	bodyBytes, err := io.ReadAll(r.Body)
+	decompressed, err := util.ReadRawBody(r)
 	if err != nil {
 		return response, err
-	}
-
-	if r.Header.Get("Content-Encoding") == "gzip" {
-		reader, err := gzip.NewReader(bytes.NewReader(bodyBytes))
-		if err != nil {
-			return response, err
-		}
-
-		defer reader.Close()
-		decompressed, err = io.ReadAll(reader)
-		if err != nil {
-			return response, err
-		}
-	} else {
-		decompressed = bodyBytes
 	}
 
 	if err := json.Unmarshal(decompressed, &response); err != nil {
@@ -609,12 +436,12 @@ func readBody(r *http.Response) (apiResponse, error) {
 
 func (s *Server) callSignozApi(r *http.Request, method string, apiUrl string, body []byte) (*http.Response, error) {
 	var resp *http.Response
-	req, err := http.NewRequest(method, apiUrl, bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(r.Context(), method, apiUrl, bytes.NewBuffer(body))
 	if err != nil {
 		return resp, err
 	}
 
-	copyHeaders(req.Header, r.Header)
+	util.CopyHeaders(req.Header, r.Header)
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

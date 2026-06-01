@@ -1,7 +1,5 @@
 package server
 
-import "github.com/SigNoz/signoz/pkg/types/metrictypes"
-
 // Types reproduced from github.com/SigNoz/signoz to avoid pulling in the
 // entire SigNoz module as a dependency.  Only the fields actually used by
 // this proxy are included; unused fields are omitted intentionally.
@@ -17,87 +15,55 @@ type description struct {
 	Unit string `json:"unit"`
 }
 
-// --- telemetrytypes ---
+// --- clickhouse query_range ---
 
-type fieldKeysResponse struct {
-	Keys     map[string][]*TelemetryFieldKey `json:"keys"`
-	Complete bool                            `json:"complete"`
+type ClickHouseQuery struct {
+	Query    string `json:"query"`
+	Disabled bool   `json:"disabled"`
 }
 
-type fieldValuesResponse struct {
-	Values   *TelemetryFieldValues `json:"values"`
-	Complete bool                  `json:"complete"`
+type CompositeQuery struct {
+	QueryType string                     `json:"queryType"`
+	PanelType string                     `json:"panelType"`
+	ChQueries map[string]ClickHouseQuery `json:"chQueries"`
 }
 
-type TelemetryFieldKey struct {
-	Name string `json:"name"`
+type QueryRangeRequest struct {
+	Start          int64          `json:"start"`
+	End            int64          `json:"end"`
+	Step           int64          `json:"step"`
+	CompositeQuery CompositeQuery `json:"compositeQuery"`
 }
 
-type TelemetryFieldValues struct {
-	StringValues []string `json:"stringValues,omitempty"`
+// QueryRangeResponse models the `data` object of a query_range response
+// (github.com/SigNoz/signoz .../model/v3.QueryRangeResponse). A clickhouse_sql
+// query that is not formatted for web (FormatForWeb=false) comes back as time
+// series under `series`, where each string column becomes a label; only when
+// the panel is formatted for web are rows returned under `list`/`table.rows`.
+// We read all three so the same query works regardless.
+type QueryRangeResponse struct {
+	Result []struct {
+		QueryName string         `json:"queryName"`
+		Series    []SeriesLabels `json:"series"`
+		List      []QueryRow     `json:"list"`
+		Table     *struct {
+			Rows []QueryRow `json:"rows"`
+		} `json:"table"`
+	} `json:"result"`
 }
 
-// --- v3 ---
-
-type FilterOperator string
-
-const (
-	FilterOperatorEqual       FilterOperator = "="
-	FilterOperatorNotEqual    FilterOperator = "!="
-	FilterOperatorContains    FilterOperator = "contains"
-	FilterOperatorNotContains FilterOperator = "ncontains"
-)
-
-type AttributeKey struct {
-	Key string `json:"key"`
+type SeriesLabels struct {
+	Labels map[string]string `json:"labels"`
 }
 
-type FilterItem struct {
-	Key      AttributeKey   `json:"key"`
-	Value    any            `json:"value"`
-	Operator FilterOperator `json:"op"`
-}
-
-type FilterSet struct {
-	Operator string       `json:"op,omitempty"`
-	Items    []FilterItem `json:"items"`
+type QueryRow struct {
+	Data map[string]any `json:"data"`
 }
 
 // --- metrics_explorer ---
-
-type MetricDetail struct {
-	MetricName string `json:"metric_name"`
-}
-
-type SummaryListMetricsRequest struct {
-	Offset  int       `json:"offset"`
-	Limit   int       `json:"limit"`
-	Start   int64     `json:"start"`
-	End     int64     `json:"end"`
-	Filters FilterSet `json:"filters"`
-}
-
-type SummaryListMetricsResponse struct {
-	Metrics []MetricDetail `json:"metrics"`
-}
 
 type MetricDetailsDTO struct {
 	Description string `json:"description"`
 	Type        string `json:"type"`
 	Unit        string `json:"unit"`
-}
-
-// --- metricsexplorertypes ---
-
-type ListMetricsResponse struct {
-	Metrics []ListMetric `json:"metrics" required:"true" nullable:"true"`
-}
-
-type ListMetric struct {
-	MetricName  string                  `json:"metricName" required:"true"`
-	Description string                  `json:"description" required:"true"`
-	MetricType  metrictypes.Type        `json:"type" required:"true"`
-	MetricUnit  string                  `json:"unit" required:"true"`
-	Temporality metrictypes.Temporality `json:"temporality" required:"true"`
-	IsMonotonic bool                    `json:"isMonotonic" required:"true"`
 }

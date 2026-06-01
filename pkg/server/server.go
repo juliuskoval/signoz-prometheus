@@ -80,8 +80,6 @@ func (s *Server) Start() {
 		Handler: s.r,
 	}
 
-	s.initialize()
-
 	idleConnsClosed := make(chan struct{})
 	go func() {
 		sigCh := make(chan os.Signal, 1)
@@ -104,32 +102,4 @@ func (s *Server) Start() {
 
 	<-idleConnsClosed
 	zap.L().Info("Server stopped")
-}
-
-func (s *Server) initialize() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.signozBaseURL+"/api/v2/metrics", nil)
-	if err != nil {
-		zap.L().Warn("Failed to build /api/v2/metrics probe request, falling back to v1", zap.Error(err))
-		v2 = false
-		return
-	}
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		zap.L().Warn("Failed to probe /api/v2/metrics, falling back to v1", zap.Error(err))
-		v2 = false
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		zap.L().Info("/api/v2/metrics not available, falling back to v1")
-		v2 = false
-		return
-	}
-
-	zap.L().Info("/api/v2/metrics available, using v2")
 }
