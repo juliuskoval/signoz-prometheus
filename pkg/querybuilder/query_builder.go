@@ -150,18 +150,33 @@ func parseLimit(q url.Values) string {
 
 func getCondition(m *labels.Matcher) string {
 	name := getName(m)
-	value := escapeCHString(m.Value)
 
 	switch m.Type {
 	case labels.MatchEqual:
-		return fmt.Sprintf("%s = '%s'", name, value)
+		return fmt.Sprintf("%s = '%s'", name, escapeCHString(m.Value))
 	case labels.MatchNotEqual:
-		return fmt.Sprintf("%s != '%s'", name, value)
+		return fmt.Sprintf("%s != '%s'", name, escapeCHString(m.Value))
 	case labels.MatchRegexp:
-		return fmt.Sprintf("match(%s, '%s')", name, value)
+		return fmt.Sprintf("%s ILIKE '%s'", name, regexpToILIKE(m.Value))
 	default:
-		return fmt.Sprintf("not match(%s, '%s')", name, value)
+		return fmt.Sprintf("%s NOT ILIKE '%s'", name, regexpToILIKE(m.Value))
 	}
+}
+
+// regexpToILIKE converts a Prometheus regexp matcher value into a case-insensitive
+// ILIKE pattern by translating a leading and/or trailing ".*" into the "%" wildcard.
+// The remaining text is treated as a literal substring.
+func regexpToILIKE(value string) string {
+	prefix, suffix := "", ""
+	if strings.HasPrefix(value, ".*") {
+		value = value[2:]
+		prefix = "%"
+	}
+	if strings.HasSuffix(value, ".*") {
+		value = value[:len(value)-2]
+		suffix = "%"
+	}
+	return prefix + escapeCHString(value) + suffix
 }
 
 func getName(m *labels.Matcher) string {
