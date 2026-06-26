@@ -27,13 +27,14 @@ const (
 )
 
 func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
-	zap.L().Debug("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log := reqLogger(r)
+	log.Debug("Received an HTTP request", zap.String("url.path", r.RequestURI))
 	apiUrl := s.signozBaseURL + "/api/v1/health"
 
 	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
+		log.Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -44,12 +45,13 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		zap.L().Error("Error copying response body", zap.Error(err))
+		log.Error("Error copying response body", zap.Error(err))
 	}
 }
 
 func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
-	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log := reqLogger(r)
+	log.Info("Received an HTTP request", zap.String("url.path", r.RequestURI))
 	apiUrl := s.signozBaseURL + r.URL.Path
 	if r.URL.RawQuery != "" {
 		apiUrl += "?" + r.URL.RawQuery
@@ -58,7 +60,7 @@ func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
+		log.Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -69,16 +71,17 @@ func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		zap.L().Error("Error copying response body", zap.Error(err))
+		log.Error("Error copying response body", zap.Error(err))
 	}
 }
 
 func (s *Server) getQueryRange(w http.ResponseWriter, r *http.Request) {
-	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log := reqLogger(r)
+	log.Info("Received an HTTP request", zap.String("url.path", r.RequestURI))
 
 	if err := sanitizeQuery(r); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		zap.L().Error("Failed to parse request", zap.Error(err))
+		log.Error("Failed to parse request", zap.Error(err))
 		return
 	}
 
@@ -89,7 +92,7 @@ func (s *Server) getQueryRange(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
+		log.Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -100,23 +103,24 @@ func (s *Server) getQueryRange(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		zap.L().Error("Error copying response body", zap.Error(err))
+		log.Error("Error copying response body", zap.Error(err))
 	}
 }
 
 func (s *Server) getLabels(w http.ResponseWriter, r *http.Request) {
-	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log := reqLogger(r)
+	log.Info("Received an HTTP request", zap.String("url.path", r.RequestURI))
 
 	query, err := qb.BuildGetLabelsQuery(r.URL.Query())
 	if err != nil {
-		zap.L().Warn("Invalid request", zap.Error(err), zap.String("url.path", r.RequestURI))
+		log.Warn("Invalid request", zap.Error(err), zap.String("url.path", r.RequestURI))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	rows, err := s.runClickHouseQuery(r, query)
 	if err != nil {
-		zap.L().Error("ClickHouse query failed", zap.Error(err), zap.String("query", query))
+		log.Error("ClickHouse query failed", zap.Error(err), zap.String("query", query))
 		writeUpstreamError(w, err)
 		return
 	}
@@ -142,7 +146,7 @@ func (s *Server) getLabels(w http.ResponseWriter, r *http.Request) {
 // query_range API (queryType clickhouse_sql, table panel) and returns the
 // result rows.
 func (s *Server) runClickHouseQuery(r *http.Request, query string) ([]QueryRow, error) {
-	zap.L().Info("Executing ClickHouse query", zap.String("query", query))
+	reqLogger(r).Info("Executing ClickHouse query", zap.String("query", query))
 
 	reqBody := QueryRangeRequest{
 		Step: 60,
@@ -256,7 +260,8 @@ func writeUpstreamError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
-	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log := reqLogger(r)
+	log.Info("Received an HTTP request", zap.String("url.path", r.RequestURI))
 	vars := mux.Vars(r)
 	label := vars["label"]
 	label = model.UnescapeName(label, model.ValueEncodingEscaping)
@@ -268,14 +273,14 @@ func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
 
 	query, err := qb.BuildGetLabelValuesQuery(label, r.URL.Query())
 	if err != nil {
-		zap.L().Warn("Invalid request", zap.Error(err), zap.String("url.path", r.RequestURI))
+		log.Warn("Invalid request", zap.Error(err), zap.String("url.path", r.RequestURI))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	rows, err := s.runClickHouseQuery(r, query)
 	if err != nil {
-		zap.L().Error("ClickHouse query failed", zap.Error(err), zap.String("query", query))
+		log.Error("ClickHouse query failed", zap.Error(err), zap.String("query", query))
 		writeUpstreamError(w, err)
 		return
 	}
@@ -291,16 +296,17 @@ func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
+	log := reqLogger(r)
 	query, err := qb.BuildGetSeriesQuery(r.URL.Query())
 	if err != nil {
-		zap.L().Warn("Invalid request", zap.Error(err), zap.String("url.path", r.RequestURI))
+		log.Warn("Invalid request", zap.Error(err), zap.String("url.path", r.RequestURI))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	rows, err := s.runClickHouseQuery(r, query)
 	if err != nil {
-		zap.L().Error("ClickHouse query failed", zap.Error(err), zap.String("query", query))
+		log.Error("ClickHouse query failed", zap.Error(err), zap.String("query", query))
 		writeUpstreamError(w, err)
 		return
 	}
@@ -316,7 +322,8 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
-	zap.L().Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log := reqLogger(r)
+	log.Info("Received an HTTP request", zap.String("url.path", r.RequestURI))
 	metric := r.URL.Query().Get("metric")
 	if metric == "" {
 		http.Error(w, "metric query parameter is required", http.StatusBadRequest)
@@ -327,7 +334,7 @@ func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
-		zap.L().Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
+		log.Error("An error occurred while calling SigNoz API", zap.String("url.full", apiUrl), zap.Error(err))
 		return
 	}
 	defer resp.Body.Close()
@@ -338,7 +345,7 @@ func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 
 	response, err := readBody(resp)
 	if err != nil {
-		zap.L().Error("Failed to read response from SigNoz API", zap.Error(err))
+		log.Error("Failed to read response from SigNoz API", zap.Error(err))
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -346,12 +353,12 @@ func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 	var metadata MetricDetailsDTO
 	jsonBytes, err := json.Marshal(response.Data)
 	if err != nil {
-		zap.L().Error("Failed to marshal response data", zap.Error(err))
+		log.Error("Failed to marshal response data", zap.Error(err))
 		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
 		return
 	}
 	if err := json.Unmarshal(jsonBytes, &metadata); err != nil {
-		zap.L().Error("Failed to unmarshal response from SigNoz", zap.Error(err))
+		log.Error("Failed to unmarshal response from SigNoz", zap.Error(err))
 		http.Error(w, "backend JSON format mismatch", http.StatusBadGateway)
 		return
 	}
@@ -367,7 +374,7 @@ func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
-	zap.L().Warn("Unhandled route", zap.String("url.path", r.RequestURI))
+	reqLogger(r).Warn("Unhandled route", zap.String("url.path", r.RequestURI))
 	http.Error(w, "404: Not found", http.StatusNotFound)
 }
 
@@ -447,6 +454,6 @@ func (s *Server) callSignozApi(r *http.Request, method string, apiUrl string, bo
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	zap.L().Info("Sending an HTTP request", zap.String("url.full", apiUrl))
+	reqLogger(r).Info("Sending an HTTP request", zap.String("url.full", apiUrl))
 	return s.httpClient.Do(req)
 }

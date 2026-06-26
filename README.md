@@ -30,3 +30,41 @@ The address of your SigNoz instance can be set using the `SIGNOZ_URL` environmen
 | `SIGNOZ_TLS_SKIP_VERIFY` | `false` | When set to `true`, disables TLS certificate verification on outbound calls to SigNoz. Intended for self-signed certificates in trusted environments — do not enable in production. |
 | `PORT` | `8081` | TCP port the proxy listens on. |
 | `LOG_LEVEL` | `info` | Zap log level. Accepts `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal`. Invalid values fall back to `info` and a warning is written to stderr. |
+
+## Tracing
+
+The proxy is instrumented with OpenTelemetry. Each incoming request becomes a server span (named by route template, e.g. `/api/v1/label/{label}/values`), and each outbound call to SigNoz becomes a nested client span with W3C `traceparent` propagation.
+
+Tracing is configured entirely through the standard OpenTelemetry environment variables. The most relevant ones:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `OTEL_TRACES_EXPORTER` | `otlp` | Exporter to use: `otlp` (export over OTLP), `console` (print spans to stdout for debugging), or `none` (disable tracing). |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | OTLP wire protocol: `http/protobuf` or `grpc`. `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` overrides it for traces only. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` (HTTP) / `http://localhost:4317` (gRPC) | Collector address. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` overrides it for traces only. |
+| `OTEL_SERVICE_NAME` | `signoz-prometheus` | Service name attached to all spans and log records. |
+| `OTEL_RESOURCE_ATTRIBUTES` | — | Extra resource attributes, e.g. `deployment.environment=prod,service.version=1.0.0`. |
+
+When `OTEL_TRACES_EXPORTER=otlp`, every OTLP exporter setting from the [OTLP exporter spec](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) is honored automatically, in both the generic `OTEL_EXPORTER_OTLP_*` and signal-specific `OTEL_EXPORTER_OTLP_TRACES_*` form: `ENDPOINT`, `INSECURE`, `HEADERS`, `TIMEOUT`, `COMPRESSION`, `CERTIFICATE`, `CLIENT_CERTIFICATE`, and `CLIENT_KEY`.
+
+Example — export over gRPC to a collector that requires an auth header:
+
+```
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4317
+OTEL_EXPORTER_OTLP_HEADERS=signoz-access-token=<token>
+OTEL_EXPORTER_OTLP_COMPRESSION=gzip
+```
+
+## Logging
+
+Application logs (zap) are written to stdout as before, and are additionally bridged to OpenTelemetry and exported over OTLP, sharing the same resource (`service.name`, etc.) and OTLP connection settings as traces. Log export is configured with its own exporter selector, mirroring the tracing one:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `OTEL_LOGS_EXPORTER` | `otlp` | Exporter to use: `otlp` (export over OTLP), `console` (print records to stdout for debugging), or `none` (stdout logging only; no OTLP export). |
+| `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL` | inherits `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP wire protocol for logs only: `http/protobuf` or `grpc`. |
+| `OTEL_EXPORTER_OTLP_LOGS_*` | inherits `OTEL_EXPORTER_OTLP_*` | Per-signal overrides for `ENDPOINT`, `HEADERS`, `TIMEOUT`, `COMPRESSION`, TLS, etc., honored automatically as for traces. |
+
+`LOG_LEVEL` gates both sinks, so the OTLP log stream matches what is written to stdout.
