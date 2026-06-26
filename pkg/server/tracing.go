@@ -11,9 +11,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.34.0"
 	"go.uber.org/zap"
 )
 
@@ -46,21 +44,9 @@ func InitTracing(ctx context.Context) (func(context.Context) error, error) {
 		return nil, err
 	}
 
-	res, err := resource.New(ctx,
-		resource.WithFromEnv(), // OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES
-		resource.WithTelemetrySDK(),
-		resource.WithAttributes(semconv.ServiceName("signoz-prometheus")),
-	)
-	if err != nil {
-		// A merge conflict (e.g. schema URL mismatch) shouldn't take down the
-		// service; fall back to the exporter-only provider.
-		zap.L().Warn("Failed to build full tracing resource, using defaults", zap.Error(err))
-		res = resource.Default()
-	}
-
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
-		sdktrace.WithResource(res),
+		sdktrace.WithResource(newResource(ctx)),
 	)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
@@ -104,11 +90,7 @@ func buildExporter(ctx context.Context, exporter string) (sdktrace.SpanExporter,
 //	OTEL_EXPORTER_OTLP[_TRACES]_CLIENT_CERTIFICATE   client cert file (mTLS)
 //	OTEL_EXPORTER_OTLP[_TRACES]_CLIENT_KEY           client key file (mTLS)
 func buildOTLPExporter(ctx context.Context) (sdktrace.SpanExporter, error) {
-	protocol := strings.ToLower(strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")))
-	if protocol == "" {
-		protocol = strings.ToLower(strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")))
-	}
-
+	protocol := resolveOTLPProtocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
 	switch protocol {
 	case "grpc":
 		return otlptracegrpc.New(ctx)

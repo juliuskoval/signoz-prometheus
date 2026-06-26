@@ -6,14 +6,20 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/prometheus/common v0.67.5
 	github.com/prometheus/prometheus v0.310.0
+	go.opentelemetry.io/contrib/bridges/otelzap v0.19.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/gorilla/mux/otelmux v0.69.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
 	go.opentelemetry.io/otel v1.44.0
+	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.20.0
+	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.44.0
+	go.opentelemetry.io/otel/exporters/stdout/stdoutlog v0.20.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.44.0
+	go.opentelemetry.io/otel/log v0.20.0
 	go.opentelemetry.io/otel/sdk v1.44.0
-	go.uber.org/zap v1.27.1
+	go.opentelemetry.io/otel/sdk/log v0.20.0
+	go.uber.org/zap v1.28.0
 )
 
 require (
