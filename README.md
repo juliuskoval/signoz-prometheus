@@ -68,4 +68,3 @@ Application logs (zap) are written to stdout as before, and are additionally bri
 | `OTEL_EXPORTER_OTLP_LOGS_*` | inherits `OTEL_EXPORTER_OTLP_*` | Per-signal overrides for `ENDPOINT`, `HEADERS`, `TIMEOUT`, `COMPRESSION`, TLS, etc., honored automatically as for traces. |
 
 `LOG_LEVEL` gates both sinks, so the OTLP log stream matches what is written to stdout.
-```

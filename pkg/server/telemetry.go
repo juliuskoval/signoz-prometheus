@@ -16,10 +16,14 @@ import (
 // name to "signoz-prometheus". A build error (e.g. schema URL mismatch) falls
 // back to the default resource rather than taking the process down.
 func newResource(ctx context.Context) *resource.Resource {
+	// The default service name is applied first so OTEL_SERVICE_NAME /
+	// OTEL_RESOURCE_ATTRIBUTES (read by WithFromEnv last) override it. Resource
+	// detectors merge last-wins, so reversing this order would pin the name to
+	// the default and silently ignore the env var.
 	res, err := resource.New(ctx,
-		resource.WithFromEnv(), // OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES
-		resource.WithTelemetrySDK(),
 		resource.WithAttributes(semconv.ServiceName("signoz-prometheus")),
+		resource.WithTelemetrySDK(),
+		resource.WithFromEnv(), // OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES
 	)
 	if err != nil {
 		zap.L().Warn("Failed to build full telemetry resource, using defaults", zap.Error(err))

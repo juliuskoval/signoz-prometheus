@@ -28,7 +28,7 @@ const (
 
 func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 	log := reqLogger(r)
-	log.Debug("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log.Debug("Received an HTTP request", zap.String("url.path", r.RequestURI))
 	apiUrl := s.signozBaseURL + "/api/v1/health"
 
 	resp, err := s.callSignozApi(r, http.MethodGet, apiUrl, nil)
@@ -51,7 +51,7 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
 	log := reqLogger(r)
-	log.Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received an HTTP request", zap.String("url.path", r.RequestURI))
 	apiUrl := s.signozBaseURL + r.URL.Path
 	if r.URL.RawQuery != "" {
 		apiUrl += "?" + r.URL.RawQuery
@@ -77,7 +77,7 @@ func (s *Server) getQuery(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getQueryRange(w http.ResponseWriter, r *http.Request) {
 	log := reqLogger(r)
-	log.Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received an HTTP request", zap.String("url.path", r.RequestURI))
 
 	if err := sanitizeQuery(r); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -109,7 +109,7 @@ func (s *Server) getQueryRange(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getLabels(w http.ResponseWriter, r *http.Request) {
 	log := reqLogger(r)
-	log.Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received an HTTP request", zap.String("url.path", r.RequestURI))
 
 	query, err := qb.BuildGetLabelsQuery(r.URL.Query())
 	if err != nil {
@@ -261,7 +261,7 @@ func writeUpstreamError(w http.ResponseWriter, err error) {
 
 func (s *Server) getLabelValues(w http.ResponseWriter, r *http.Request) {
 	log := reqLogger(r)
-	log.Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received an HTTP request", zap.String("url.path", r.RequestURI))
 	vars := mux.Vars(r)
 	label := vars["label"]
 	label = model.UnescapeName(label, model.ValueEncodingEscaping)
@@ -323,7 +323,7 @@ func (s *Server) getSeries(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 	log := reqLogger(r)
-	log.Info("Received an HTTP request", zap.String("url.full", r.RequestURI))
+	log.Info("Received an HTTP request", zap.String("url.path", r.RequestURI))
 	metric := r.URL.Query().Get("metric")
 	if metric == "" {
 		http.Error(w, "metric query parameter is required", http.StatusBadRequest)

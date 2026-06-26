@@ -52,7 +52,7 @@ func TestBuildGetSeriesQueryWithMatch(t *testing.T) {
 	}
 	want := "SELECT DISTINCT metric_name " +
 		"FROM signoz_metrics.distributed_time_series_v4 " +
-		"WHERE __normalized = false AND match(metric_name, '.*demo.*') " +
+		"WHERE __normalized = false AND metric_name ILIKE '%demo%' " +
 		"ORDER BY metric_name ASC LIMIT 1000"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)

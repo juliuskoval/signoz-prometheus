@@ -63,7 +63,7 @@ func TestReqLoggerCorrelatesAndKeepsStdoutClean(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v1/labels", nil).
 		WithContext(trace.ContextWithSpanContext(context.Background(), sc))
 
-	reqLogger(req).Info("Received an HTTP request", zap.String("url.full", req.RequestURI))
+	reqLogger(req).Info("Received an HTTP request", zap.String("url.path", req.RequestURI))
 
 	// (1) The exported record is correlated with the span.
 	if len(exp.records) != 1 {
