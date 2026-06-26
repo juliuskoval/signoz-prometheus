@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gorilla/mux/otelmux"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
 )
 
@@ -41,8 +43,10 @@ func BuildServer() *Server {
 
 	server := &Server{
 		signozBaseURL: signozBaseURL,
-		httpClient:    &http.Client{Transport: tr, Timeout: 30 * time.Second},
-		r:             mux.NewRouter(),
+		// Wrap the transport so each outbound call to SigNoz becomes a client
+		// span and injects W3C trace-context headers for downstream correlation.
+		httpClient: &http.Client{Transport: otelhttp.NewTransport(tr), Timeout: 30 * time.Second},
+		r:          mux.NewRouter(),
 	}
 
 	return server
@@ -58,6 +62,11 @@ func buildTLSConfig() (*tls.Config, error) {
 }
 
 func (s *Server) RegisterRoutes() {
+	// otelmux starts a server span per request, named by the matched route
+	// template so concrete path values (e.g. label names) don't explode span
+	// cardinality.
+	s.r.Use(otelmux.Middleware("signoz-prometheus"))
+
 	s.r.HandleFunc("/healthz", s.getHealth)
 	s.r.HandleFunc("/api/v1/query", s.getQuery)
 	s.r.HandleFunc("/api/v1/query_range", s.getQueryRange)

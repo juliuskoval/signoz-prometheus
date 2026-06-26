@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"os"
+	"time"
 
 	server "github.com/juliuskoval/signoz-prometheus/pkg/server"
 	"go.uber.org/zap"
@@ -12,6 +14,18 @@ func main() {
 	log := buildLogger()
 	zap.ReplaceGlobals(log)
 	defer log.Sync()
+
+	shutdownTracing, err := server.InitTracing(context.Background())
+	if err != nil {
+		zap.L().Fatal("Failed to initialize tracing", zap.Error(err))
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(ctx); err != nil {
+			zap.L().Error("Error shutting down tracing", zap.Error(err))
+		}
+	}()
 
 	s := server.BuildServer()
 
