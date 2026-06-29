@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -58,6 +60,26 @@ func buildTLSConfig() (*tls.Config, error) {
 		zap.L().Warn("TLS certificate verification disabled (SIGNOZ_TLS_SKIP_VERIFY=true)")
 		cfg.InsecureSkipVerify = true
 	}
+
+	if caPath := os.Getenv("SIGNOZ_TLS_CA_CERT"); caPath != "" {
+		pem, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading CA bundle %q: %w", caPath, err)
+		}
+		// Start from the system roots so public CAs still validate, then add the
+		// private CA. SystemCertPool can fail on some platforms, so fall back to
+		// an empty pool holding only our CA.
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("no valid certificates found in CA bundle %q", caPath)
+		}
+		cfg.RootCAs = pool
+		zap.L().Info("Loaded custom CA bundle for SigNoz TLS", zap.String("path", caPath))
+	}
+
 	return cfg, nil
 }
 

@@ -28,6 +28,7 @@ The address of your SigNoz instance can be set using the `SIGNOZ_URL` environmen
 | --- | --- | --- |
 | `SIGNOZ_URL` | `http://signoz:8080` | Base URL of the SigNoz instance the proxy forwards requests to. Must be a valid URL; the process exits on startup if it isn't. |
 | `SIGNOZ_TLS_SKIP_VERIFY` | `false` | When set to `true`, disables TLS certificate verification on outbound calls to SigNoz. Intended for self-signed certificates in trusted environments — do not enable in production. |
+| `SIGNOZ_TLS_CA_CERT` | — | Path to a PEM CA bundle used to verify the SigNoz server certificate, in addition to the system roots. Use this instead of `SIGNOZ_TLS_SKIP_VERIFY` for private or self-signed CAs. The process exits on startup if the file is missing or contains no valid certificates. |
 | `PORT` | `8081` | TCP port the proxy listens on. |
 | `LOG_LEVEL` | `info` | Zap log level. Accepts `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal`. Invalid values fall back to `info` and a warning is written to stderr. |
 
